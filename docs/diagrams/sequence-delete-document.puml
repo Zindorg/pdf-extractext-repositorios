@@ -1,0 +1,38 @@
+@startuml
+!theme plain
+autonumber
+
+title "Eliminar un documento (soft-delete) — DELETE /api/v1/documents/{document_id}"
+
+actor "Orquestador" as ORQ
+participant "Gin Router\n(persister:8083)" as ROUTER
+participant "DocumentHandler" as HANDLER
+participant "DocumentService" as SERVICE
+participant "DocumentRepository\n(mongo)" as REPO
+participant "MongoDB" as MONGO
+
+ORQ -> ROUTER : **DELETE** http://persister:8083\n/api/v1/documents/{document_id}
+ROUTER -> HANDLER : SoftDelete()
+
+HANDLER -> SERVICE : SoftDelete(document_id)
+SERVICE -> REPO : SoftDelete(document_id)
+REPO -> MONGO : updateOne( documents,\n{document_id, deleted_at: null},\n{ $set: { deleted_at: now, updated_at: now } } )
+alt documento inexistente o ya borrado
+    MONGO --> REPO : 0 modificados
+    REPO --> SERVICE : ErrNotFound
+    SERVICE --> HANDLER : ErrNotFound
+    HANDLER --> ORQ : **404 Not Found**
+else eliminado
+    MONGO --> REPO : 1 modificado
+    REPO --> SERVICE : ok
+    SERVICE --> HANDLER : ok
+    HANDLER --> ORQ : **204 No Content**
+end
+
+note over MONGO
+    Al setear deleted_at el doc sale del
+    índice único parcial de checksum ⇒
+    ese checksum vuelve a estar disponible
+    (se puede re-ingerir con nuevo document_id).
+end note
+@enduml

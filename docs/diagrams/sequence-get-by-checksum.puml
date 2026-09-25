@@ -1,0 +1,32 @@
+@startuml
+!theme plain
+autonumber
+
+title "Mostrar un texto por su checksum — GET /api/v1/documents/checksum/{checksum}"
+
+actor "Orquestador" as ORQ
+participant "Gin Router\n(persister:8083)" as ROUTER
+participant "DocumentHandler" as HANDLER
+participant "DocumentService" as SERVICE
+participant "DocumentRepository\n(mongo)" as REPO
+participant "MongoDB" as MONGO
+
+ORQ -> ROUTER : **GET** http://persister:8083\n/api/v1/documents/checksum/{checksum}
+ROUTER -> HANDLER : GetByChecksum()
+
+HANDLER -> HANDLER : validar checksum\n(64 hex / 400 si inválido)
+HANDLER -> SERVICE : GetByChecksum(checksum)
+SERVICE -> REPO : FindByChecksum(checksum)
+REPO -> MONGO : findOne( documents,\n{checksum, deleted_at: null} )
+alt no encontrado
+    MONGO --> REPO : sin resultado
+    REPO --> SERVICE : ErrNotFound
+    SERVICE --> HANDLER : ErrNotFound
+    HANDLER --> ORQ : **404 Not Found**
+else encontrado
+    MONGO --> REPO : documento BSON
+    REPO --> SERVICE : Document
+    SERVICE --> HANDLER : doc
+    HANDLER --> ORQ : **200 OK** + DocumentResponse
+end
+@enduml

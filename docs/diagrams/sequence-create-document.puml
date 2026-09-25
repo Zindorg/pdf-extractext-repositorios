@@ -1,0 +1,62 @@
+@startuml
+!theme plain
+autonumber
+
+title "Cargar un texto nuevo (con resumen / sin resumen) — vía stream"
+
+actor "Orquestador" as ORQ
+participant "Redis\nStreams (document-events)" as REDIS
+participant "StreamConsumer" as CONSUMER
+participant "MessageHandlers" as HANDLER
+participant "DocumentService" as SERVICE
+participant "DocumentRepository\n(mongo)" as REPO
+participant "MongoDB" as MONGO
+
+== Fase 1 — Siempre llega el evento "original" ==
+
+ORQ -> REDIS : XADD document-events\n{event:"original", document_id,\nchecksum, extracted_text, metadata}
+REDIS -> CONSUMER : XREADGROUP (documents-persister)
+CONSUMER -> HANDLER : OnOriginal(event)
+
+HANDLER -> SERVICE : CreatePending(document_id, checksum,\nextracted_text, metadata)
+SERVICE -> REPO : Insert(Document{status: PENDING})
+REPO -> MONGO : insertOne( documents )
+alt checksum o document_id ya activo (duplicado real)
+    MONGO --> REPO : error código 11000
+    REPO --> SERVICE : ErrDuplicateDocumentID | ErrDuplicateChecksum
+    SERVICE --> HANDLER : error dominio
+    HANDLER -> CONSUMER : **XACK + descarte** (no es error)
+else insertado
+    MONGO --> REPO : ok (ObjectId)
+    REPO --> SERVICE : Document{status: PENDING}
+    SERVICE --> HANDLER : ok (PENDING)
+    HANDLER -> CONSUMER : XACK(document_id)
+end
+
+== Fase 2 — Según summarize ==
+
+alt **Variante B — sin resumen** (summarize=false)
+    note over REDIS
+        El documento queda PENDING almacenado.
+        No llega evento "summary". No hay timeout.
+    end note
+else **Variante A — con resumen** (summarize=true)
+    ORQ -> REDIS : XADD document-events\n{event:"summary", document_id, summary}
+    REDIS -> CONSUMER : XREADGROUP (document-events)
+    CONSUMER -> HANDLER : OnSummary(event)
+    HANDLER -> SERVICE : CompleteWithSummary(document_id, summary)
+    SERVICE -> REPO : UpdateStatus → COMPLETED
+    REPO -> MONGO : updateOne( documents )\n{status: COMPLETED, summary, updated_at}
+    MONGO --> REPO : ok
+    REPO --> SERVICE : Document{status: COMPLETED}
+    SERVICE --> HANDLER : ok
+    HANDLER -> CONSUMER : XACK(document_id)
+    note over REDIS : mensaje confirmado\n(entregas at-least-once)
+end
+
+alt resumen huérfano (document_id inexistente)
+    HANDLER -> SERVICE : CompleteWithSummary(document_id, summary)
+    SERVICE --> HANDLER : ErrNotFound
+    HANDLER -> CONSUMER : retry (XAUTOCLAIM + backoff)\n→ agotado → copia a document-events-dlq
+end
+@enduml

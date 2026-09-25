@@ -1,0 +1,36 @@
+@startuml
+!theme plain
+autonumber
+
+title "Restaurar un documento — POST /api/v1/documents/{document_id}/restore"
+
+actor "Orquestador" as ORQ
+participant "Gin Router\n(persister:8083)" as ROUTER
+participant "DocumentHandler" as HANDLER
+participant "DocumentService" as SERVICE
+participant "DocumentRepository\n(mongo)" as REPO
+participant "MongoDB" as MONGO
+
+ORQ -> ROUTER : **POST** http://persister:8083\n/api/v1/documents/{document_id}/restore
+ROUTER -> HANDLER : Restore()
+
+HANDLER -> SERVICE : Restore(document_id)
+SERVICE -> REPO : Restore(document_id)
+REPO -> MONGO : updateOne( documents,\n{document_id, deleted_at: { $ne: null } },\n{ $unset: { deleted_at }, $set: { updated_at: now } } )
+alt documento inexistente o nunca borrado
+    MONGO --> REPO : 0 modificados
+    REPO --> SERVICE : ErrNotFound
+    SERVICE --> HANDLER : ErrNotFound
+    HANDLER --> ORQ : **404 Not Found**
+else checksum ya re-ocupado por otro activo
+    MONGO --> REPO : error código 11000 (índice único parcial)
+    REPO --> SERVICE : ErrRestoreConflict
+    SERVICE --> HANDLER : ErrRestoreConflict
+    HANDLER --> ORQ : **409 Conflict**\n{code:"RESTORE_CONFLICT"}
+else restaurado
+    MONGO --> REPO : 1 modificado
+    REPO --> SERVICE : ok
+    SERVICE --> HANDLER : ok
+    HANDLER --> ORQ : **204 No Content**
+end
+@enduml

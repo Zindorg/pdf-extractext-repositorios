@@ -1,0 +1,31 @@
+@startuml
+!theme plain
+autonumber
+
+title "Health check — GET /api/v1/health"
+
+actor "Orquestador" as CLI
+participant "Gin Router\n(persister:8083)" as ROUTER
+participant "DocumentHandler" as HANDLER
+participant "DocumentService" as SERVICE
+participant "MongoDB" as MONGO
+participant "Redis\nStreams" as REDIS
+
+CLI -> ROUTER : **GET** http://persister:8083\n/api/v1/health
+ROUTER -> HANDLER : Health()
+
+HANDLER -> SERVICE : Ping()
+SERVICE -> MONGO : ping()  ← (par)
+SERVICE -> REDIS : ping()  ← (par)
+alt Mongo y Redis responden ok
+    MONGO --> SERVICE : ok
+    REDIS --> SERVICE : ok
+    SERVICE --> HANDLER : {status:"ok"}
+    HANDLER --> CLI : **200 OK** {status:"ok"}
+else alguna dependencia caída
+    MONGO --> SERVICE : timeout | error  ← (redis ok)
+    SERVICE --> HANDLER : estado degradado
+    HANDLER --> CLI : **503 Service Unavailable**
+end
+
+@enduml

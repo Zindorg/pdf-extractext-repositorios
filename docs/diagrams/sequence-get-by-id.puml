@@ -1,0 +1,32 @@
+@startuml
+!theme plain
+autonumber
+
+title "Mostrar un texto por su id — GET /api/v1/documents/{document_id} (HTTP interno)"
+
+actor "Orquestador" as ORQ
+participant "Gin Router\n(persister:8083)" as ROUTER
+participant "DocumentHandler" as HANDLER
+participant "DocumentService" as SERVICE
+participant "DocumentRepository\n(mongo)" as REPO
+participant "MongoDB" as MONGO
+
+ORQ -> ROUTER : **GET** http://persister:8083\n/api/v1/documents/{document_id}\n(por nombre de servicio, no IP)
+ROUTER -> HANDLER : GetByDocumentID()
+
+HANDLER -> HANDLER : validar formato document_id\n(UUID / 400 si inválido)
+HANDLER -> SERVICE : GetByDocumentID(document_id)
+SERVICE -> REPO : FindByDocumentID(document_id)
+REPO -> MONGO : findOne( documents,\n{document_id, deleted_at: null} )
+alt no encontrado
+    MONGO --> REPO : sin resultado
+    REPO --> SERVICE : ErrNotFound
+    SERVICE --> HANDLER : ErrNotFound
+    HANDLER --> ORQ : **404 Not Found** {code:"NOT_FOUND"}
+else encontrado
+    MONGO --> REPO : documento BSON
+    REPO --> SERVICE : Document
+    SERVICE --> HANDLER : doc
+    HANDLER --> ORQ : **200 OK** + DocumentResponse\n(texto + summary + metadata)
+end
+@enduml

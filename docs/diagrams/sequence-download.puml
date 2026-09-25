@@ -1,0 +1,34 @@
+@startuml
+!theme plain
+autonumber
+
+title "Descargar un texto — GET /documents/{document_id}/download/{tipo}"
+
+actor "Orquestador" as ORQ
+participant "Gin Router\n(persister:8083)" as ROUTER
+participant "DocumentHandler" as HANDLER
+participant "DocumentService" as SERVICE
+participant "DocumentRepository\n(mongo)" as REPO
+participant "MongoDB" as MONGO
+
+ORQ -> ROUTER : **GET** http://persister:8083\n/api/v1/documents/{document_id}/download/**original**\nó /download/**summary**
+ROUTER -> HANDLER : DownloadOriginal() | DownloadSummary()
+
+HANDLER -> SERVICE : GetByDocumentID(document_id)
+SERVICE -> REPO : FindByDocumentID(document_id)
+REPO -> MONGO : findOne( documents,\n{document_id, deleted_at: null} )
+alt no encontrado
+    MONGO --> REPO : sin resultado
+    REPO --> SERVICE : ErrNotFound
+    SERVICE --> HANDLER : ErrNotFound
+    HANDLER --> ORQ : **404 Not Found**
+else encontrado y tipo == "summary" y status == PENDING
+    REPO --> SERVICE : Document{status: PENDING}
+    SERVICE --> HANDLER : ErrSummaryNotReady
+    HANDLER --> ORQ : **409 Conflict**\n{code:"SUMMARY_NOT_READY"}
+else encontrado y texto disponible
+    REPO --> SERVICE : Document
+    SERVICE --> HANDLER : textContent
+    HANDLER --> ORQ : **200 OK** text/plain\n+ Content-Disposition: attachment\n(RFC 5987, filename del metadata)
+end
+@enduml

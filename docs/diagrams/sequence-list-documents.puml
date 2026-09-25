@@ -1,0 +1,25 @@
+@startuml
+!theme plain
+autonumber
+
+title "Listar documentos — GET /api/v1/documents (HTTP interno)"
+
+actor "Orquestador" as ORQ
+participant "Gin Router\n(persister:8083)" as ROUTER
+participant "DocumentHandler" as HANDLER
+participant "DocumentService" as SERVICE
+participant "DocumentRepository\n(mongo)" as REPO
+participant "MongoDB" as MONGO
+
+ORQ -> ROUTER : **GET** http://persister:8083\n/api/v1/documents\n?page, page_size, status, filename,\ncreated_from, created_to, include_deleted
+ROUTER -> HANDLER : List()
+
+HANDLER -> HANDLER : validar query params\n(página default 20, máx 100)
+HANDLER -> SERVICE : List(filter, page, pageSize)
+SERVICE -> REPO : List(filter, page, pageSize)
+REPO -> MONGO : find + sort(created_at: -1)\n+ skip/limit + countDocuments
+MONGO --> REPO : items + total
+REPO --> SERVICE : []Document + total
+SERVICE --> HANDLER : paginación
+HANDLER --> ORQ : **200 OK**\n{items, total, page, page_size}
+@enduml

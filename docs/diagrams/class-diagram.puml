@@ -1,0 +1,253 @@
+@startuml
+!theme plain
+hide circle
+
+title "Diagrama de Clases — Microservicio de Persistencia de Documentos"
+
+package "Dominio (internal/domain)" {
+  enum Status {
+    PENDING
+    COMPLETED
+  }
+
+  class Metadata {
+    +filename: string
+    +mime_type: string
+    +size_bytes: int64
+    +page_count: int
+  }
+
+  class Document {
+    +document_id: string
+    +checksum: string
+    +status: Status
+    +extracted_text: string
+    +summary: *string
+    +metadata: Metadata
+    +processing_time_ms: int64
+    +created_at: time.Time
+    +updated_at: time.Time
+    +deleted_at: *time.Time
+    +IsCompleted(): bool
+    +IsDeleted(): bool
+  }
+
+  interface DocumentRepository {
+    +Insert(ctx: Context, doc: Document) error
+    +UpdateStatus(ctx: Context, documentID: string, status: Status, summary: *string) (*Document, error)
+    +FindByDocumentID(ctx: Context, documentID: string) (*Document, error)
+    +FindByChecksum(ctx: Context, checksum: string) (*Document, error)
+    +List(ctx: Context, filter: ListFilter, page: int, pageSize: int) ([]Document, int64, error)
+    +SoftDelete(ctx: Context, documentID: string) error
+    +Purge(ctx: Context, documentID: string) error
+    +Restore(ctx: Context, documentID: string) error
+  }
+
+  class DomainError
+
+  Document "1" *-- "1" Metadata
+  Document --> Status
+}
+
+package "Aplicación (internal/application)" {
+  class DocumentService {
+    -repo: DocumentRepository
+    +CreatePending(params) (*Document, error)
+    +CompleteWithSummary(documentID: string, summary: string) (*Document, error)
+    +GetByDocumentID(documentID: string) (*Document, error)
+    +GetByChecksum(checksum: string) (*Document, error)
+    +List(filter, page, pageSize) ([]Document, int64, error)
+    +SoftDelete(documentID: string) error
+    +Purge(documentID: string) error
+    +Restore(documentID: string) error
+  }
+
+  DocumentService ..> DocumentRepository : "usa el puerto"
+  DocumentService ..> Document : "opera sobre"
+}
+
+package "Adaptadores (internal/adapters)" {
+
+  package "mongodb" {
+    class MongoDocumentRepository {
+      -collection: mongo.Collection
+      -mapper: Mapper
+      +EnsureIndexes(ctx) error
+      +Insert(ctx, doc) error
+      +UpdateStatus(ctx, documentID, status, summary) (*Document, error)
+      +FindByDocumentID(ctx, documentID) (*Document, error)
+      +FindByChecksum(ctx, checksum) (*Document, error)
+      +List(ctx, filter, page, pageSize) ([]Document, int64, error)
+      +SoftDelete(ctx, documentID) error
+      +Purge(ctx, documentID) error
+      +Restore(ctx, documentID) error
+    }
+
+    class Mapper {
+      +ToDomain(doc: persistedDocument) Document
+      +ToBSON(doc: Document) persistedDocument
+    }
+
+    class persistedDocument {
+      +_id: primitive.ObjectID
+      +document_id: string
+      +checksum: string
+      +status: string
+      +extracted_text: string
+      +summary: *string
+      +metadata: metadataBSON
+      +processing_time_ms: int64
+      +created_at: time.Time
+      +updated_at: time.Time
+      +deleted_at: *time.Time
+    }
+
+    class IndexConfigurer {
+      +uq_document_id: IndexModel
+      +uq_checksum_active: IndexModel (parcial deleted_at==null)
+      +ix_filename: IndexModel
+      +ix_created_at: IndexModel
+    }
+
+    MongoDocumentRepository ..|> DocumentRepository : "implementa"
+    MongoDocumentRepository *-- Mapper
+    MongoDocumentRepository ..> IndexConfigurer
+    Mapper --> persistedDocument
+  }
+
+  package "redis" {
+    class StreamConsumer {
+      -client: redis.Client
+      -handlers: MessageHandlers
+      +Run(ctx) error
+      -readLoop(ctx) error
+      -processMessage(msg) error
+      -ack(msgID: string) error
+    }
+
+    class MessageHandlers {
+      +OnOriginal(event OriginalEvent) error
+      +OnSummary(event SummaryEvent) error
+    }
+
+    class RetryDLQ {
+      +XAutoClaim(ctx, group, maxRetries) error
+      +PushToDLQ(ctx, msg, cause) error
+      +IsOverRetryLimit(entry): bool
+    }
+
+    class OriginalEvent {
+      +event: string
+      +document_id: string
+      +checksum: string
+      +extracted_text: string
+      +metadata: Metadata
+    }
+
+    class SummaryEvent {
+      +event: string
+      +document_id: string
+      +summary: string
+    }
+
+    StreamConsumer *-- MessageHandlers
+    StreamConsumer ..> RetryDLQ
+    MessageHandlers ..> DocumentService
+    MessageHandlers ..> OriginalEvent
+    MessageHandlers ..> SummaryEvent
+  }
+}
+
+package "Transporte (internal/api)" {
+  class Router {
+    +New() http.Handler
+    -Group(api/v1)
+    +SetupSwagger()
+  }
+
+  class DocumentHandler {
+    +GetByDocumentID(c: Context)
+    +GetByChecksum(c: Context)
+    +List(c: Context)
+    +DownloadOriginal(c: Context)
+    +DownloadSummary(c: Context)
+    +SoftDelete(c: Context)
+    +Purge(c: Context)
+    +Restore(c: Context)
+    +Health(c: Context)
+  }
+
+  class DocumentResponse {
+    +document_id: string
+    +checksum: string
+    +status: string
+    +extracted_text: string
+    +summary: *string
+    +metadata: Metadata
+    +processing_time_ms: int64
+    +created_at: time.Time
+    +updated_at: time.Time
+  }
+
+  class ErrorEnvelope {
+    +code: string
+    +message: string
+    +details: map[string]any
+  }
+
+  Router *-- DocumentHandler
+  DocumentHandler ..> DocumentService
+  DocumentHandler ..> DocumentResponse
+  DocumentHandler ..> ErrorEnvelope
+}
+
+package "Config (internal/config)" {
+  class Config {
+    +HTTP_PORT: string
+    +MONGODB_URI: string
+    +MONGODB_DATABASE: string
+    +REDIS_ADDR: string
+    +STREAM_NAME: string
+    +STREAM_GROUP: string
+    +DLQ_NAME: string
+    +RETRY_MAX: int
+    +RETRY_BACKOFF: time.Duration
+    +MAX_TEXT_BYTES: int64
+    +LOG_LEVEL: string
+  }
+}
+
+package "Composition Root (cmd/server)" {
+  class CompositionRoot {
+    +Main()
+  }
+  CompositionRoot ..> Config : "lee"
+  CompositionRoot ..> DocumentService : "inyección por constructor"
+  CompositionRoot ..> MongoDocumentRepository
+  CompositionRoot ..> StreamConsumer
+  CompositionRoot ..> DocumentHandler
+}
+
+note bottom of DocumentRepository
+  Puerto del dominio: nada en las
+  capas internas conoce Mongo ni Redis.
+end note
+
+note bottom of StreamConsumer
+  Escribir documentos llega SOLO por
+  stream (Orquestador XADD). Lectura/
+  borrado llegan por HTTP interno.
+  Duplicados legítimos => XACK + descarte.
+  Error recuperable => XAUTOCLAIM + backoff.
+  Agotado => copia a document-events-dlq.
+end note
+
+note bottom of DocumentHandler
+  Dos borrados, decisión del Orquestador:
+  DELETE .../documents/{id} = soft-delete
+  ordinario (deleted_at, reversible).
+  POST .../documents/{id}/purge = fís.
+  (deleteOne, irreversible), explícito.
+end note
+
+@enduml
