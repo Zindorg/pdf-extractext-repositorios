@@ -47,8 +47,7 @@ Patrón central de diseño: **Repository pattern** (puerto en dominio + adaptado
        │
        │  ESCRITURA (async)                    │  LECTURA / BORRADO (sync)
        │  XADD document-events                 │  HTTP interno
-       │  original / summary                   │  GET · DELETE · POST …/purge
-       │                                      │  http://persister:8083
+       │  original / summary                   │  GET · DELETE http://persister:8083
        ▼                                      ▼
 [REDIS STREAMS]                   [MS PERSISTENCIA]            ◄ ESTE PROYECTO
 document-events ·                    Go + Gin · 8083
@@ -66,9 +65,7 @@ document-events-dlq                  solo red interna
 **Flujo de este microservicio:**
 
 1. **Escritura (async)** — `Orquestador --XADD--> Redis --XREADGROUP--> Persistidor`: el Orquestador publica `original` (y `summary` si `summarize=true`); el consumer las procesa por `document_id`.
-2. **Lectura/borrado (sync)** — `Orquestador --HTTP interno--> Persistidor` (`http://persister:8083`): responde texto/summary, descargas, health y los dos borrados bajo demanda del Orquestador:
-   - `DELETE /documents/{id}` → **soft-delete (ordinario, reversible)**: el borrado por defecto, marca `deleted_at`, recuperable con `restore`. No destruye datos.
-   - `POST /documents/{id}/purge` → **borrado físico (explícito, destructivo, irreversible)**: `deleteOne`; lo elige el Orquestador solo cuando la información debe desaparecer (privacidad, dato sensible, liberar espacio). Nunca ocurre por accidente: requiere la ruta explícita.
+2. **Lectura/borrado (sync)** — `Orquestador --HTTP interno--> Persistidor` (`http://persister:8083`): responde texto/summary, descargas, soft-delete, restore y health bajo demanda del Orquestador.
 3. **Persistencia (BSON)** — `Persistidor --BSON--> MongoDB` (`db-net`, aislada): el driver oficial usa BSON hacia la colección `documents`.
 
 > **Fuera de alcance**: los workers Extractor y Resumidor no aparecen porque este microservicio **solo se comunica con el Orquestador** (hub & spoke). El Orquestador correlaciona por `document_id` el resumen que produce el Resumidor.
@@ -121,8 +118,7 @@ metadata                               │
       ┌───────────────────▼──────────────────────────────────┐
       │  CAPA 2 · APLICACIÓN  internal/application           │
       │  Service: createPending, completeWithSummary,        │
-      │  get, findByChecksum, list, softDelete, purge,       │
-      │  restore                                             │
+      │  get, findByChecksum, list, softDelete, restore      │
       └───────────────────┬──────────────────────────────────┘
                           │  usa el PUERTO
       ┌───────────────────▼──────────────────────────────────┐
@@ -162,7 +158,7 @@ pdf-extractext-repositorios/
 │   │                             # ErrDuplicateDocumentID, ErrSummaryNotReady,
 │   │                             # ErrRestoreConflict
 │   ├── application/service.go    # reglas de negocio: dedup, completar, list,
-│   │                             # soft-delete, purge, restore
+│   │                             # soft-delete, restore
 │   ├── adapters/mongodb/
 │   │   ├── repository.go         # impl con el driver oficial
 │   │   ├── mapper.go             # BSON ↔ domain.Document
@@ -272,7 +268,6 @@ type persistedDocument struct {
 - **Status** como ciclo de vida: `PENDING` (llegó el original) → `COMPLETED` (llegó el resumen). No hay timeout: un `PENDING` conserva su checksum ocupado.
 - **Soft delete** como estado (`deleted_at`), no borrado físico: un doc borrado sale del índice parcial → **libera** su checksum → permite re-ingerir el mismo contenido con un **nuevo** `document_id`.
 - **Restore**: re-activar (unset `deleted_at`) colisiona en el índice único con un nuevo activo ya re-ingerido → `11000` → `ErrRestoreConflict` → `409`. El índice es la fuente de verdad, sin carreras.
-- **Purge (borrado físico, explícito)**: endpoint aparte del soft-delete (`POST /documents/{document_id}/purge`) ejecuta `deleteOne` — el documento desaparece por completo y **no hay restore posible**. Aplica a documentos activos o ya soft-deleted (sirve para purgar los lógicos). Al no existir el doc, su checksum queda libre para re-ingesta. Es *caller-beware*: solo lo invoca el Orquestador cuando corresponde; en la operativa ordinaria se usa el soft-delete.
 - **Mapeo**: el adaptador convierte BSON ↔ `Document`; `ObjectId`, `Status` y tipos BSON nunca salen hacia la API (expone `document_id`, `status` como string).
 
 ---
@@ -322,7 +317,6 @@ DLQ  document-events-dlq   (copia del mensaje + causa cuando agota retries)
 | GET | `/documents/{document_id}/download/summary` | — | `200` `text/plain` + `Content-Disposition` | `400` · `404` · `409` aún `PENDING` |
 | GET | `/documents` | `page, page_size, status, filename, created_from, created_to, include_deleted` | `200` `{items, total, page, page_size}` | `400` |
 | DELETE | `/documents/{document_id}` | — | `204` (soft) | `400` · `404` |
-| POST | `/documents/{document_id}/purge` | — | `204` (borrado físico) | `400` · `404` |
 | POST | `/documents/{document_id}/restore` | — | `204` | `400` · `404` · `409` conflicto checksum |
 | GET | `/health` | — | `200` `{status:"ok"}` | `503` BD/Redis caídos |
 
@@ -352,7 +346,6 @@ Live en `docs/adr/`:
 - **ADR-004 — PENDING sin timeout + retry/DLQ**: un documento sin resumen queda guardado indefinidamente con su checksum ocupado; los mensajes fallidos usan `XAUTOCLAIM` con backoff y luego `document-events-dlq`.
 - **ADR-005 — Go + MongoDB + Redis**: Go 1.26 (binario estático), MongoDB 7 data-per-service aislado en `db-net`, Redis Streams como canal de ingesta del ecosistema.
 - **ADR-006 — Hub & Spoke con URL interna (no Traefik en este servicio)**: este microservicio NO se expone por Traefik; el Orquestador lo alcanza por nombre de servicio Docker (`http://persister:8083`), cumpliendo "URL, nunca IP" sin romper el aislamiento (spec §2.1/§7). Traefik solo enruta hacia el Orquestador (red pública).
-- **ADR-007 — Soft-delete por defecto + Purge explícito**: el borrado ordinario es lógico (`deleted_at`, reversible vía `restore`); el borrado físico (`deleteOne`, irreversible) es un endpoint explícito aparte (`POST /documents/{document_id}/purge`) que solo invoca el Orquestador. Evitar flag `?permanent=true` sobre `DELETE` para que el borrado destructivo sea imposible por accidente.
 
 ---
 
@@ -416,11 +409,11 @@ Pirámide de pruebas, todo conducido por **TDD** (rojo → verde):
 
 | Capa | Tipo | Cobertura |
 |---|---|---|
-| Service | Unit (repo fake con `testify/mock`) | Create PENDING ok, checksum duplicado → 409, document_id duplicado → 409, completeWithSummary ok, resumen huérfano → error, GET borrado → 404, soft-delete inexistente → 404, restore conflicto → 409, purge activo/soft-deleted → ok, purge inexistente → 404, list con filtros/paginación/total |
+| Service | Unit (repo fake con `testify/mock`) | Create PENDING ok, checksum duplicado → 409, document_id duplicado → 409, completeWithSummary ok, resumen huérfano → error, GET borrado → 404, soft-delete inexistente → 404, restore conflicto → 409, list con filtros/paginación/total |
 | Handlers | `httptest` | Status codes, shapes JSON, `Content-Disposition`, validación 400, envelope de error |
-| Adapter Mongo | Integración (MongoDB real en Docker) | `11000` duplicado, soft-delete → re-ingest mismo checksum OK, restore bloqueado con nuevo activo, purge → doc inexistente en BD, PENDING persistido sin resumen, orden/paginación |
+| Adapter Mongo | Integración (MongoDB real en Docker) | `11000` duplicado, soft-delete → re-ingest mismo checksum OK, restore bloqueado con nuevo activo, PENDING persistido sin resumen, orden/paginación |
 | Consumer Redis | Integración (Redis real en Docker) | original → PENDING, original+summary → COMPLETED, duplicado ACK+descarte, summary huérfano → retry → DLQ |
-| e2e | Smoke contra compose | XADD `original`/`summary` al stream → verificar en Mongo vía HTTP interno (`http://persister:8083`): lectura, descarga, soft-delete, purge |
+| e2e | Smoke contra compose | XADD `original`/`summary` al stream → verificar en Mongo vía HTTP interno (`http://persister:8083`): lectura, descarga, soft-delete |
 
 Comandos: `make test`, `make test-integration`, `go vet ./...`.
 

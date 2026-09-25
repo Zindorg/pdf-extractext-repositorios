@@ -39,7 +39,6 @@ package "Dominio (internal/domain)" {
     +FindByChecksum(ctx: Context, checksum: string) (*Document, error)
     +List(ctx: Context, filter: ListFilter, page: int, pageSize: int) ([]Document, int64, error)
     +SoftDelete(ctx: Context, documentID: string) error
-    +Purge(ctx: Context, documentID: string) error
     +Restore(ctx: Context, documentID: string) error
   }
 
@@ -58,7 +57,6 @@ package "Aplicación (internal/application)" {
     +GetByChecksum(checksum: string) (*Document, error)
     +List(filter, page, pageSize) ([]Document, int64, error)
     +SoftDelete(documentID: string) error
-    +Purge(documentID: string) error
     +Restore(documentID: string) error
   }
 
@@ -79,7 +77,6 @@ package "Adaptadores (internal/adapters)" {
       +FindByChecksum(ctx, checksum) (*Document, error)
       +List(ctx, filter, page, pageSize) ([]Document, int64, error)
       +SoftDelete(ctx, documentID) error
-      +Purge(ctx, documentID) error
       +Restore(ctx, documentID) error
     }
 
@@ -172,7 +169,6 @@ package "Transporte (internal/api)" {
     +DownloadOriginal(c: Context)
     +DownloadSummary(c: Context)
     +SoftDelete(c: Context)
-    +Purge(c: Context)
     +Restore(c: Context)
     +Health(c: Context)
   }
@@ -240,14 +236,6 @@ note bottom of StreamConsumer
   Duplicados legítimos => XACK + descarte.
   Error recuperable => XAUTOCLAIM + backoff.
   Agotado => copia a document-events-dlq.
-end note
-
-note bottom of DocumentHandler
-  Dos borrados, decisión del Orquestador:
-  DELETE .../documents/{id} = soft-delete
-  ordinario (deleted_at, reversible).
-  POST .../documents/{id}/purge = fís.
-  (deleteOne, irreversible), explícito.
 end note
 
 @enduml
