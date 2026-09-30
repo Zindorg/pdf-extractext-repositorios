@@ -1,0 +1,30 @@
+services:
+  persister:
+    build: .
+    container_name: persister-app
+    environment:
+      HTTP_PORT: ${HTTP_PORT:-8083}
+      MONGODB_URI: mongodb://mongo:27017/${MONGODB_DATABASE:-text_extractor_db}
+      MONGODB_DATABASE: ${MONGODB_DATABASE:-text_extractor_db}
+      REDIS_ADDR: redis:6379
+      STREAM_NAME: ${STREAM_NAME:-document-events}
+      STREAM_GROUP: ${STREAM_GROUP:-documents-persister}
+      DLQ_NAME: ${DLQ_NAME:-document-events-dlq}
+      RETRY_MAX: ${RETRY_MAX:-5}
+      RETRY_BACKOFF: ${RETRY_BACKOFF:-5s}
+      MAX_TEXT_BYTES: ${MAX_TEXT_BYTES:-52428800}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+    networks:
+      mired:
+        aliases: [persister]
+      db-net:
+    ports:
+      - "8083:8083"
+
+networks:
+  # Red del ecosistema: se crea con docker network create mired.
+  mired:
+    external: true
+  # Red de datos creada por docker-compose.mongo.yml; acá solo se referencia.
+  db-net:
+    external: true

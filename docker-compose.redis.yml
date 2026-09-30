@@ -1,0 +1,21 @@
+# Redis del microservicio persister: canal de ingesta (stream document-events).
+# Compartido con el ecosistema por la red externa mired (alias redis).
+services:
+  redis:
+    image: redis:7-alpine
+    container_name: persister-redis
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis_data:/data
+    networks:
+      mired:
+        aliases: [redis]
+    ports:
+      - "6379:6379"
+
+networks:
+  mired:
+    external: true
+
+volumes:
+  redis_data:

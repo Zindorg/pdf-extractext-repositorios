@@ -192,7 +192,7 @@ pdf-extractext-repositorios/
 | Adapter Mongo | `internal/adapters/mongodb` | Persistencia real, índices, mapeo BSON↔dominio | Repository + Data Mapper |
 | Adapter Redis | `internal/adapters/redis` | Consumo del stream, retry, DLQ | Consumer Group |
 | API | `internal/api` | Contratos HTTP internos (lectura/descarga/borrado/health), validación, docs | DTO, Handler |
-| Infra | docker-compose | `mongo` · `redis` · `app` en redes internas aisladas | Red `internal-net` + `db-net` |
+| Infra | docker-compose por componente | `mongo` · `redis` · `app` en composes separados | Red `mired` (ecosistema) + `db-net` (aislada) |
 
 ---
 
@@ -352,54 +352,63 @@ Live en `docs/adr/`:
 ## 13. Arquitectura de despliegue
 
 - `Dockerfile` multi-stage: `golang:1.26-alpine` (build) → `distroless` nonroot (binario ~10MB, sin shell).
-- `docker-compose.yml` de ESTE microservicio: `mongo` + `redis` + `app`, en redes internas. **Traefik NO vive en este compose**: pertenece al ecosistema y solo expone al Orquestador. La app crea índices y el consumer group al arrancar; no hay servicio de migraciones.
-- Redes: `internal-net` (app + redis, donde el Orquestador también está en el compose general) y `db-net` con `internal: true` (solo `app` + `mongo`, aislada del exterior).
+- **Un `docker-compose` por componente de ESTE microservicio**: `docker-compose.mongo.yml`, `docker-compose.redis.yml` y `docker-compose.app.yml`, encadenables con `make compose-up` (ordena mongo → redis → app). **Traefik NO vive en estos composes**: pertenece al ecosistema y solo expone al Orquestador. La app crea índices y el consumer group al arrancar; no hay servicio de migraciones.
+- Redes: `mired` (**externa**, compartida con el ecosistema: aquí viven app y redis) y `db-net` con `internal: true` (creada por el compose de mongo; la referencian mongo app — la única con acceso a la BD).
 
 ```yaml
+# docker-compose.mongo.yml
+services:
+  mongo:
+    image: mongo:8
+    command: ["--replSet", "rs0", "--bind_ip_all", "--port", "27017"]
+    networks:
+      db-net:
+        aliases: [ mongo ]
+
+  mongo-init:  # inicializa el replica set al primer arranque
+    image: mongo:8
+    depends_on: [ mongo ]
+
 networks:
-  internal-net: { driver: bridge }
   db-net:
-    driver: bridge
+    name: db-net
     internal: true
-
-mongo:
-  image: mongo:7
-  networks: [ db-net ]
-  volumes: [ "mongodata:/data/db" ]
-  healthcheck:
-    test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
-    interval: 5s
-    timeout: 5s
-    retries: 10
-
-redis:
-  image: redis:7-alpine
-  networks: [ internal-net ]
-  healthcheck:
-    test: ["CMD", "redis-cli", "ping"]
-    interval: 5s
-    timeout: 5s
-    retries: 10
-
-app:
-  build: .
-  networks: [ internal-net, db-net ]   # único con acceso a la BD
-  environment:
-    - HTTP_PORT=8083
-    - MONGODB_URI=mongodb://mongo:27017/text_extractor_db
-    - REDIS_ADDR=redis:6379
-    - STREAM_NAME=document-events
-    - STREAM_GROUP=documents-persister
-    - DLQ_NAME=document-events-dlq
-  healthcheck:
-    test: ["CMD", "wget", "-qO-", "http://localhost:8083/api/v1/health"]
-    interval: 10s
-    timeout: 5s
-    retries: 5
 ```
 
-- **Comunicación entre microservicios por URL, nunca IP**: el Orquestador llama al Persistidor con `http://persister:8083` y este se conecta a Mongo/Redis por nombre de servicio Docker (`mongo`, `redis`). Los nombres de servicio son DNS estables que no cambian al re-arrancar el contenedor (el IP sí cambia), cumpliendo el requisito de las "mini-MV".
-- En el compose del **ecosistema** (otro repo) viven: `traefik` (red pública), `orchestrator`, `extractor`, `summarizer` (red interna compartida con este servicio) y la red `public-net` del cliente. Este compose se unifica o acopla al del ecosistema compartiendo `internal-net`.
+```yaml
+# docker-compose.redis.yml
+services:
+  redis:
+    image: redis:7-alpine
+    networks:
+      mired:
+        aliases: [ redis ]
+
+networks:
+  mired: { external: true }
+```
+
+```yaml
+# docker-compose.app.yml
+services:
+  persister:
+    build: .
+    networks:
+      mired:
+        aliases: [ persister ]   # el Orquestador usa http://persister:8083
+      db-net: { external: true } # creada por el compose de mongo
+    environment:
+      - HTTP_PORT=8083
+      - MONGODB_URI=mongodb://mongo:27017/text_extractor_db
+      - REDIS_ADDR=redis:6379
+
+networks:
+  mired: { external: true }
+  db-net: { external: true }
+```
+
+- **Comunicación entre microservicios por URL, nunca IP**: el Orquestador llama al Persistidor con `http://persister:8083` y este se conecta a Mongo/Redis por nombre (`mongo`, `redis`), resuelto por DNS en `mired`/`db-net`. Los nombres de servicio son DNS estables que no cambian al re-arrancar el contenedor (el IP sí cambia), cumpliendo el requisito de las "mini-MV".
+- En el compose del **ecosistema** (otro repo) viven: `traefik` (red pública), `orchestrator`, `extractor`, `summarizer` (comparten `mired` con este microservicio) y la red `public-net` del cliente. La red `mired` se crea una vez con `docker network create mired` y se comparte entre repos.
 
 ---
 

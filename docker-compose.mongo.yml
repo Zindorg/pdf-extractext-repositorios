@@ -1,0 +1,44 @@
+services:
+  mongo:
+    image: mongo:8
+    container_name: persister-mongo
+    environment:
+      MONGO_INITDB_DATABASE: ${MONGODB_DATABASE:-text_extractor_db}
+    command: ["--replSet", "rs0", "--bind_ip_all", "--port", "27017"]
+    volumes:
+      - mongo_data:/data/db
+    networks:
+      mired:
+        aliases: [mongo]
+    ports:
+      - "27017:27017"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  mongo-init:
+    image: mongo:8
+    container_name: persister-mongo-init
+    depends_on:
+      - mongo
+    entrypoint: >
+      bash -c "
+        mongosh --host mongo:27017 --eval '
+          try {
+            rs.status()
+          } catch (e) {
+            rs.initiate()
+          }
+        '
+      "
+    networks:
+      - db-net
+
+networks:
+  # Red de datos: la crea este project con nombre estable para que el
+  # compose de la app la use como externa. Aislada del exterior (internal).
+  db-net:
+    name: db-net
+    internal: true
+
+volumes:
+  mongo_data:
