@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/marco/pdf-extractext-repositorios/internal/domain"
 )
@@ -26,7 +27,15 @@ func unimplemented(what string) error {
 }
 
 func (s *DocumentService) CreatePending(ctx context.Context, doc domain.Document) (*domain.Document, error) {
-	return nil, unimplemented("createPending")
+	now := time.Now().UTC()
+	doc.Status = domain.StatusPending
+	doc.CreatedAt = now
+	doc.UpdatedAt = now
+
+	if err := s.repo.Insert(ctx, doc); err != nil {
+		return nil, err
+	}
+	return s.repo.FindByDocumentID(ctx, doc.DocumentID)
 }
 
 func (s *DocumentService) CompleteWithSummary(ctx context.Context, documentID, summary string) (*domain.Document, error) {

@@ -25,12 +25,7 @@ func NewDocumentHandler(service *application.DocumentService, health HealthCheck
 }
 
 func (h *DocumentHandler) GetByDocumentID(c *gin.Context) {
-	_, err := h.service.GetByDocumentID(c.Request.Context(), c.Param("document_id"))
-	if err != nil {
-		abortWithError(c, err)
-		return
-	}
-	c.JSON(http.StatusOK, nil)
+	c.JSON(http.StatusNotImplemented, gin.H{"code": "NOT_IMPLEMENTED", "message": "fase de lógica pendiente"})
 }
 
 func (h *DocumentHandler) GetByChecksum(c *gin.Context) {
@@ -58,6 +53,11 @@ func (h *DocumentHandler) Restore(c *gin.Context) {
 }
 
 func (h *DocumentHandler) Health(c *gin.Context) {
-	// TODO(TDD): fase roja — se restaura el ping a Mongo/Redis en la fase de lógica.
-	c.JSON(http.StatusNotImplemented, gin.H{"code": "NOT_IMPLEMENTED", "message": "fase de lógica pendiente"})
+	if h.health != nil {
+		if err := h.health.Ping(); err != nil {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"status": "error"})
+			return
+		}
+	}
+	c.JSON(http.StatusOK, gin.H{"status": "ok"})
 }

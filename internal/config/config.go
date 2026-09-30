@@ -36,9 +36,6 @@ type Config struct {
 }
 
 func Load() (*Config, error) {
-	// TODO(TDD): fase roja — se restaura la lectura real en la fase de lógica.
-	return &Config{}, nil
-
 	retryMax, err := envInt("RETRY_MAX", defaultRetryMax)
 	if err != nil {
 		return nil, fmt.Errorf("RETRY_MAX: %w", err)
