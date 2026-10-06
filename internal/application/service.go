@@ -39,7 +39,15 @@ func (s *DocumentService) CreatePending(ctx context.Context, doc domain.Document
 }
 
 func (s *DocumentService) CompleteWithSummary(ctx context.Context, documentID, summary string) (*domain.Document, error) {
-	return nil, unimplemented("completeWithSummary")
+	current, err := s.repo.FindByDocumentID(ctx, documentID)
+	if err != nil {
+		return nil, err
+	}
+	if current.IsCompleted() {
+		return current, nil
+	}
+	sum := summary
+	return s.repo.UpdateStatus(ctx, documentID, domain.StatusCompleted, &sum)
 }
 
 func (s *DocumentService) GetByDocumentID(ctx context.Context, documentID string) (*domain.Document, error) {

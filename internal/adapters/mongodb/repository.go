@@ -4,10 +4,12 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"time"
 
 	"github.com/marco/pdf-extractext-repositorios/internal/domain"
 	"go.mongodb.org/mongo-driver/v2/bson"
 	"go.mongodb.org/mongo-driver/v2/mongo"
+	"go.mongodb.org/mongo-driver/v2/mongo/options"
 )
 
 const collectionName = "documents"
@@ -56,7 +58,32 @@ func mapInsertError(err error) error {
 }
 
 func (r *MongoDocumentRepository) UpdateStatus(ctx context.Context, documentID string, status domain.Status, summary *string) (*domain.Document, error) {
-	return nil, errNotImplemented
+	if r.collection == nil {
+		return nil, errNotConnected
+	}
+
+	filter := bson.M{"document_id": documentID}
+	update := bson.M{"$set": bson.M{
+		"status":     string(status),
+		"summary":    summary,
+		"updated_at": time.Now().UTC(),
+	}}
+
+	res := r.collection.FindOneAndUpdate(ctx, filter, update,
+		options.FindOneAndUpdate().SetReturnDocument(options.After))
+	if res.Err() != nil {
+		if errors.Is(res.Err(), mongo.ErrNoDocuments) {
+			return nil, domain.ErrNotFound
+		}
+		return nil, res.Err()
+	}
+
+	var persisted persistedDocument
+	if err := res.Decode(&persisted); err != nil {
+		return nil, err
+	}
+	doc := toDomain(persisted)
+	return &doc, nil
 }
 
 func (r *MongoDocumentRepository) FindByDocumentID(ctx context.Context, documentID string) (*domain.Document, error) {
