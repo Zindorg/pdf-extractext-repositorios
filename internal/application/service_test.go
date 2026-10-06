@@ -183,3 +183,85 @@ func TestCompleteWithSummary_AlreadyCompleted_IsBenign(t *testing.T) {
 	require.Equal(t, domain.StatusCompleted, stored.Status)
 	require.Equal(t, "primera vez", *stored.Summary)
 }
+
+// insertSoftDeleted guarda un documento ya borrado (soft delete) vía el fake,
+// imitando lo que producirá SoftDelete en el Slice 5.
+func insertSoftDeleted(t *testing.T, repo *inMemoryRepo, doc domain.Document) {
+	t.Helper()
+	deletedAt := time.Now().UTC().Add(-time.Hour)
+	doc.DeletedAt = &deletedAt
+	require.NoError(t, repo.Insert(context.Background(), doc))
+}
+
+func TestGetByDocumentID_Found(t *testing.T) {
+	repo := newInMemoryRepo()
+	svc := application.NewDocumentService(repo)
+
+	_, err := svc.CreatePending(context.Background(), domain.Document{
+		DocumentID: "doc-1", Checksum: "abc123", ExtractedText: "contenido",
+	})
+	require.NoError(t, err)
+
+	got, err := svc.GetByDocumentID(context.Background(), "doc-1")
+	require.NoError(t, err)
+	require.NotNil(t, got)
+	require.Equal(t, "doc-1", got.DocumentID)
+	require.Equal(t, domain.StatusPending, got.Status)
+	require.Equal(t, "contenido", got.ExtractedText)
+}
+
+func TestGetByDocumentID_NotFound(t *testing.T) {
+	repo := newInMemoryRepo()
+	svc := application.NewDocumentService(repo)
+
+	got, err := svc.GetByDocumentID(context.Background(), "no-existe")
+	require.Nil(t, got)
+	require.ErrorIs(t, err, domain.ErrNotFound)
+}
+
+func TestGetByDocumentID_SoftDeleted_ReturnsErrNotFound(t *testing.T) {
+	repo := newInMemoryRepo()
+	svc := application.NewDocumentService(repo)
+
+	insertSoftDeleted(t, repo, domain.Document{DocumentID: "doc-del", Checksum: "del-1"})
+
+	got, err := svc.GetByDocumentID(context.Background(), "doc-del")
+	require.Nil(t, got)
+	require.ErrorIs(t, err, domain.ErrNotFound)
+}
+
+func TestGetByChecksum_Found(t *testing.T) {
+	repo := newInMemoryRepo()
+	svc := application.NewDocumentService(repo)
+
+	_, err := svc.CreatePending(context.Background(), domain.Document{
+		DocumentID: "doc-1", Checksum: "abc123", ExtractedText: "contenido",
+	})
+	require.NoError(t, err)
+
+	got, err := svc.GetByChecksum(context.Background(), "abc123")
+	require.NoError(t, err)
+	require.NotNil(t, got)
+	require.Equal(t, "doc-1", got.DocumentID)
+	require.Equal(t, "abc123", got.Checksum)
+}
+
+func TestGetByChecksum_NotFound(t *testing.T) {
+	repo := newInMemoryRepo()
+	svc := application.NewDocumentService(repo)
+
+	got, err := svc.GetByChecksum(context.Background(), "no-existe")
+	require.Nil(t, got)
+	require.ErrorIs(t, err, domain.ErrNotFound)
+}
+
+func TestGetByChecksum_SoftDeleted_ReturnsErrNotFound(t *testing.T) {
+	repo := newInMemoryRepo()
+	svc := application.NewDocumentService(repo)
+
+	insertSoftDeleted(t, repo, domain.Document{DocumentID: "doc-del", Checksum: "del-check"})
+
+	got, err := svc.GetByChecksum(context.Background(), "del-check")
+	require.Nil(t, got)
+	require.ErrorIs(t, err, domain.ErrNotFound)
+}
