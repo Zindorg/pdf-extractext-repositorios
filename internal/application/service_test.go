@@ -3,6 +3,7 @@ package application_test
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/marco/pdf-extractext-repositorios/internal/application"
 	"github.com/marco/pdf-extractext-repositorios/internal/domain"
@@ -36,8 +37,18 @@ func (r *inMemoryRepo) Insert(_ context.Context, doc domain.Document) error {
 	return nil
 }
 
-func (r *inMemoryRepo) UpdateStatus(_ context.Context, _ string, _ domain.Status, _ *string) (*domain.Document, error) {
-	return nil, nil // no se usa en el slice 1
+// UpdateStatus persiste el cambio de estado (fake fiel del port):
+// inexistente → ErrNotFound (huérfano); existente → COMPLETED + updated_at.
+func (r *inMemoryRepo) UpdateStatus(_ context.Context, documentID string, status domain.Status, summary *string) (*domain.Document, error) {
+	doc, ok := r.byID[documentID]
+	if !ok {
+		return nil, domain.ErrNotFound
+	}
+	doc.Status = status
+	doc.Summary = summary
+	doc.UpdatedAt = time.Now().UTC()
+	r.byID[documentID] = doc
+	return &doc, nil
 }
 
 func (r *inMemoryRepo) FindByDocumentID(_ context.Context, documentID string) (*domain.Document, error) {
@@ -123,4 +134,52 @@ func TestCreatePending_DuplicateDocumentID(t *testing.T) {
 
 	_, err = svc.CreatePending(context.Background(), payload)
 	require.ErrorIs(t, err, domain.ErrDuplicateDocumentID)
+}
+
+func TestCompleteWithSummary_CompletesPendingDocument(t *testing.T) {
+	repo := newInMemoryRepo()
+	svc := application.NewDocumentService(repo)
+
+	_, err := svc.CreatePending(context.Background(), domain.Document{
+		DocumentID:    "doc-1",
+		Checksum:      "abc123",
+		ExtractedText: "contenido original",
+	})
+	require.NoError(t, err)
+
+	got, err := svc.CompleteWithSummary(context.Background(), "doc-1", "resumen del doc")
+	require.NoError(t, err)
+	require.NotNil(t, got)
+	require.Equal(t, domain.StatusCompleted, got.Status)
+	require.NotNil(t, got.Summary)
+	require.Equal(t, "resumen del doc", *got.Summary)
+	require.True(t, got.UpdatedAt.After(got.CreatedAt))
+}
+
+func TestCompleteWithSummary_OrphanSummary_ReturnsErrNotFound(t *testing.T) {
+	repo := newInMemoryRepo()
+	svc := application.NewDocumentService(repo)
+
+	_, err := svc.CompleteWithSummary(context.Background(), "no-existe", "resumen huérfano")
+	require.ErrorIs(t, err, domain.ErrNotFound)
+}
+
+func TestCompleteWithSummary_AlreadyCompleted_IsBenign(t *testing.T) {
+	repo := newInMemoryRepo()
+	svc := application.NewDocumentService(repo)
+
+	_, err := svc.CreatePending(context.Background(), domain.Document{DocumentID: "doc-1", Checksum: "abc123"})
+	require.NoError(t, err)
+
+	_, err = svc.CompleteWithSummary(context.Background(), "doc-1", "primera vez")
+	require.NoError(t, err)
+
+	// Duplicado legítimo (entrega at-least-once): sin error → consumer hace XACK + descarte.
+	_, err = svc.CompleteWithSummary(context.Background(), "doc-1", "otra vez")
+	require.NoError(t, err)
+
+	stored, err := repo.FindByDocumentID(context.Background(), "doc-1")
+	require.NoError(t, err)
+	require.Equal(t, domain.StatusCompleted, stored.Status)
+	require.Equal(t, "primera vez", *stored.Summary)
 }

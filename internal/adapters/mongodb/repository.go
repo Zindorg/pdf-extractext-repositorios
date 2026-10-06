@@ -3,8 +3,10 @@ package mongodb
 import (
 	"context"
 	"errors"
+	"strings"
 
 	"github.com/marco/pdf-extractext-repositorios/internal/domain"
+	"go.mongodb.org/mongo-driver/v2/bson"
 	"go.mongodb.org/mongo-driver/v2/mongo"
 )
 
@@ -24,11 +26,33 @@ func NewMongoDocumentRepository(db *mongo.Database) *MongoDocumentRepository {
 }
 
 func (r *MongoDocumentRepository) Insert(ctx context.Context, doc domain.Document) error {
-	_ = doc
 	if r.collection == nil {
 		return errNotConnected
 	}
-	return errNotImplemented
+
+	persisted := toPersisted(doc)
+	persisted.ID = bson.NewObjectID() // el driver no genera _id si el campo viene en cero
+	if _, err := r.collection.InsertOne(ctx, persisted); err != nil {
+		return mapInsertError(err)
+	}
+	return nil
+}
+
+// mapInsertError traduce un error de escritura de Mongo a los errores del
+// dominio. La garantía fuerte de dedup vive en los índices únicos
+// (uq_document_id y uq_checksum_active); acá solo se clasifica el 11000.
+func mapInsertError(err error) error {
+	if !mongo.IsDuplicateKeyError(err) {
+		return err
+	}
+	switch {
+	case strings.Contains(err.Error(), "uq_document_id"):
+		return domain.ErrDuplicateDocumentID
+	case strings.Contains(err.Error(), "uq_checksum_active"):
+		return domain.ErrDuplicateChecksum
+	default:
+		return errDuplicate
+	}
 }
 
 func (r *MongoDocumentRepository) UpdateStatus(ctx context.Context, documentID string, status domain.Status, summary *string) (*domain.Document, error) {
