@@ -25,7 +25,7 @@ type persistedDocument struct {
 	ProcessingTimeMS int64         `bson:"processing_time_ms"`
 	CreatedAt        time.Time     `bson:"created_at"`
 	UpdatedAt        time.Time     `bson:"updated_at"`
-	DeletedAt        *time.Time    `bson:"deleted_at"`
+	DeletedAt        *time.Time    `bson:"deleted_at,omitempty"`
 }
 
 func toPersisted(doc domain.Document) persistedDocument {

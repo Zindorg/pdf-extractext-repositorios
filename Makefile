@@ -1,4 +1,4 @@
-.PHONY: build run test vet lint compose-up compose-down logs compose-mongo compose-redis compose-app
+.PHONY: build run test test-integration vet lint compose-up compose-down logs compose-mongo compose-redis compose-app
 
 build:
 	go build -o bin/persister ./cmd/server
@@ -8,6 +8,10 @@ run:
 
 test:
 	go test ./...
+
+# Tests de integración: requieren MongoDB levantado y accesible.
+test-integration:
+	go test -tags=integration ./internal/adapters/mongodb/...
 
 vet:
 	go vet ./...
