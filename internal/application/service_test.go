@@ -159,6 +159,65 @@ func TestRepoSoftDelete_NotFound(t *testing.T) {
 	require.ErrorIs(t, err, domain.ErrNotFound)
 }
 
+func TestRepoRestore_Success(t *testing.T) {
+	repo := newInMemoryRepo()
+
+	require.NoError(t, repo.Insert(context.Background(), domain.Document{
+		DocumentID: "doc-1", Checksum: "chk-1", ExtractedText: "contenido",
+	}))
+	require.NoError(t, repo.SoftDelete(context.Background(), "doc-1"))
+	require.NoError(t, repo.Restore(context.Background(), "doc-1"))
+
+	// Restaurado: visible en Get y checksum reapropiado
+	doc, err := repo.FindByDocumentID(context.Background(), "doc-1")
+	require.NoError(t, err)
+	require.False(t, doc.IsDeleted())
+	// Re-ingestar el mismo checksum con OTRO id debe fallar (checksum reapropiado)
+	require.ErrorIs(t, repo.Insert(context.Background(), domain.Document{
+		DocumentID: "doc-2", Checksum: "chk-1", ExtractedText: "contenido",
+	}), domain.ErrDuplicateChecksum)
+}
+
+func TestRepoRestore_NotFound(t *testing.T) {
+	repo := newInMemoryRepo()
+
+	err := repo.Restore(context.Background(), "no-existe")
+	require.ErrorIs(t, err, domain.ErrNotFound)
+}
+
+func TestRepoRestore_AlreadyActive(t *testing.T) {
+	repo := newInMemoryRepo()
+
+	require.NoError(t, repo.Insert(context.Background(), domain.Document{
+		DocumentID: "doc-1", Checksum: "chk-1", ExtractedText: "contenido",
+	}))
+	// Restaurar un doc ya activo → éxito idempotente
+	require.NoError(t, repo.Restore(context.Background(), "doc-1"))
+}
+
+func TestRepoRestore_ConflictChecksum(t *testing.T) {
+	repo := newInMemoryRepo()
+
+	// Doc A: borrado, checksum "chk-1"
+	require.NoError(t, repo.Insert(context.Background(), domain.Document{
+		DocumentID: "doc-A", Checksum: "chk-1", ExtractedText: "a",
+	}))
+	require.NoError(t, repo.SoftDelete(context.Background(), "doc-A"))
+
+	// Doc B: ACTIVO, mismo checksum "chk-1"
+	require.NoError(t, repo.Insert(context.Background(), domain.Document{
+		DocumentID: "doc-B", Checksum: "chk-1", ExtractedText: "b",
+	}))
+
+	// Restaurar doc-A → conflicto con doc-B activo
+	err := repo.Restore(context.Background(), "doc-A")
+	require.ErrorIs(t, err, domain.ErrRestoreConflict)
+
+	// doc-A sigue borrado (no se restauró)
+	docA, _ := repo.FindByDocumentID(context.Background(), "doc-A")
+	require.True(t, docA.IsDeleted())
+}
+
 func TestCreatePending_StoresPendingDocument(t *testing.T) {
 	repo := newInMemoryRepo()
 	svc := application.NewDocumentService(repo)
