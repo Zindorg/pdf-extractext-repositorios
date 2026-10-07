@@ -120,7 +120,16 @@ func (r *inMemoryRepo) List(_ context.Context, filter domain.ListFilter, page, p
 	return filtered[start:end], total, nil
 }
 
-func (r *inMemoryRepo) SoftDelete(_ context.Context, _ string) error {
+func (r *inMemoryRepo) SoftDelete(_ context.Context, documentID string) error {
+	doc, ok := r.byID[documentID]
+	if !ok {
+		return domain.ErrNotFound
+	}
+	now := time.Now().UTC()
+	doc.DeletedAt = &now
+	doc.UpdatedAt = now
+	r.byID[documentID] = doc
+	delete(r.checksumID, doc.Checksum) // simula índice parcial: el checksum se libera
 	return nil
 }
 

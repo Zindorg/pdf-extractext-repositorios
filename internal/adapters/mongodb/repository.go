@@ -14,8 +14,8 @@ import (
 const collectionName = "documents"
 
 // MongoDocumentRepository implementa el puerto del dominio sobre MongoDB.
-// Insert, UpdateStatus, Find* y List están implementados; SoftDelete y
-// Restore devuelven errNotImplemented hasta la fase de lógica.
+// Insert, UpdateStatus, Find*, List y SoftDelete están implementados;
+// Restore devuelve errNotImplemented hasta la fase de lógica.
 type MongoDocumentRepository struct {
 	collection *mongo.Collection
 }
@@ -178,7 +178,20 @@ func applyCreatedRange(m bson.M, f domain.ListFilter) {
 }
 
 func (r *MongoDocumentRepository) SoftDelete(ctx context.Context, documentID string) error {
-	return errNotImplemented
+	filter := bson.M{"document_id": documentID}
+	update := bson.M{"$set": bson.M{
+		"deleted_at": domain.Now(),
+		"updated_at": domain.Now(),
+	}}
+
+	res, err := r.collection.UpdateOne(ctx, filter, update)
+	if err != nil {
+		return err
+	}
+	if res.MatchedCount == 0 {
+		return domain.ErrNotFound
+	}
+	return nil
 }
 
 func (r *MongoDocumentRepository) Restore(ctx context.Context, documentID string) error {
