@@ -51,11 +51,25 @@ func (s *DocumentService) CompleteWithSummary(ctx context.Context, documentID, s
 }
 
 func (s *DocumentService) GetByDocumentID(ctx context.Context, documentID string) (*domain.Document, error) {
-	return nil, unimplemented("get")
+	doc, err := s.repo.FindByDocumentID(ctx, documentID)
+	if err != nil {
+		return nil, err
+	}
+	if doc.IsDeleted() {
+		return nil, domain.ErrNotFound
+	}
+	return doc, nil
 }
 
 func (s *DocumentService) GetByChecksum(ctx context.Context, checksum string) (*domain.Document, error) {
-	return nil, unimplemented("findByChecksum")
+	doc, err := s.repo.FindByChecksum(ctx, checksum)
+	if err != nil {
+		return nil, err
+	}
+	if doc.IsDeleted() {
+		return nil, domain.ErrNotFound
+	}
+	return doc, nil
 }
 
 func (s *DocumentService) List(ctx context.Context, filter domain.ListFilter, page, pageSize int) ([]domain.Document, int64, error) {
