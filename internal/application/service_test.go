@@ -235,6 +235,93 @@ func TestRepoRestore_ConflictChecksum(t *testing.T) {
 	require.True(t, docA.IsDeleted())
 }
 
+func TestSoftDelete_Success(t *testing.T) {
+	repo := newInMemoryRepo()
+	svc := application.NewDocumentService(repo)
+
+	_, err := svc.CreatePending(context.Background(), domain.Document{
+		DocumentID: "doc-1", Checksum: "chk-1", ExtractedText: "contenido",
+	})
+	require.NoError(t, err)
+
+	require.NoError(t, svc.SoftDelete(context.Background(), "doc-1"))
+
+	// Borrado lógico → invisible para lectura
+	_, err = svc.GetByDocumentID(context.Background(), "doc-1")
+	require.ErrorIs(t, err, domain.ErrNotFound)
+}
+
+func TestSoftDelete_NotFound(t *testing.T) {
+	repo := newInMemoryRepo()
+	svc := application.NewDocumentService(repo)
+
+	err := svc.SoftDelete(context.Background(), "no-existe")
+	require.ErrorIs(t, err, domain.ErrNotFound)
+}
+
+func TestSoftDelete_AlreadyDeleted(t *testing.T) {
+	repo := newInMemoryRepo()
+	svc := application.NewDocumentService(repo)
+
+	insertSoftDeleted(t, repo, domain.Document{DocumentID: "doc-1", Checksum: "chk-1"})
+
+	// Borrar algo ya borrado → éxito idempotente
+	require.NoError(t, svc.SoftDelete(context.Background(), "doc-1"))
+}
+
+func TestRestore_Success(t *testing.T) {
+	repo := newInMemoryRepo()
+	svc := application.NewDocumentService(repo)
+
+	insertSoftDeleted(t, repo, domain.Document{DocumentID: "doc-1", Checksum: "chk-1"})
+
+	require.NoError(t, svc.Restore(context.Background(), "doc-1"))
+
+	doc, err := svc.GetByDocumentID(context.Background(), "doc-1")
+	require.NoError(t, err)
+	require.False(t, doc.IsDeleted())
+}
+
+func TestRestore_NotFound(t *testing.T) {
+	repo := newInMemoryRepo()
+	svc := application.NewDocumentService(repo)
+
+	err := svc.Restore(context.Background(), "no-existe")
+	require.ErrorIs(t, err, domain.ErrNotFound)
+}
+
+func TestRestore_AlreadyActive(t *testing.T) {
+	repo := newInMemoryRepo()
+	svc := application.NewDocumentService(repo)
+
+	_, err := svc.CreatePending(context.Background(), domain.Document{
+		DocumentID: "doc-1", Checksum: "chk-1",
+	})
+	require.NoError(t, err)
+
+	// Restaurar un doc activo → éxito idempotente
+	require.NoError(t, svc.Restore(context.Background(), "doc-1"))
+}
+
+func TestRestore_ConflictChecksum(t *testing.T) {
+	repo := newInMemoryRepo()
+	svc := application.NewDocumentService(repo)
+
+	// Doc A: borrado, checksum "chk-1"
+	insertSoftDeleted(t, repo, domain.Document{DocumentID: "doc-A", Checksum: "chk-1"})
+	// Doc B: ACTIVO, mismo checksum (re-ingest tras liberación)
+	require.NoError(t, repo.Insert(context.Background(), domain.Document{
+		DocumentID: "doc-B", Checksum: "chk-1", ExtractedText: "b",
+	}))
+
+	err := svc.Restore(context.Background(), "doc-A")
+	require.ErrorIs(t, err, domain.ErrRestoreConflict)
+
+	// doc-A sigue borrado
+	docA, _ := repo.FindByDocumentID(context.Background(), "doc-A")
+	require.True(t, docA.IsDeleted())
+}
+
 func TestCreatePending_StoresPendingDocument(t *testing.T) {
 	repo := newInMemoryRepo()
 	svc := application.NewDocumentService(repo)
