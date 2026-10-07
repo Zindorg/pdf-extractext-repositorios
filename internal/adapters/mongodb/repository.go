@@ -162,6 +162,16 @@ func buildMongoFilter(f domain.ListFilter) bson.M {
 			"$options": "i",
 		}
 	}
+	if f.CreatedFrom != nil || f.CreatedTo != nil {
+		rangeFilter := bson.M{}
+		if f.CreatedFrom != nil {
+			rangeFilter["$gte"] = *f.CreatedFrom
+		}
+		if f.CreatedTo != nil {
+			rangeFilter["$lte"] = *f.CreatedTo
+		}
+		m["created_at"] = rangeFilter
+	}
 	return m
 }
 
