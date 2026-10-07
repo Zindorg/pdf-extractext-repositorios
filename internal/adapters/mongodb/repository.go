@@ -243,6 +243,5 @@ func (r *MongoDocumentRepository) Restore(ctx context.Context, documentID string
 }
 
 var (
-	errNotImplemented = errors.New("not implemented yet")
-	errDuplicate      = errors.New("duplicate key")
+	errDuplicate = errors.New("duplicate key")
 )
