@@ -2,27 +2,19 @@ package application
 
 import (
 	"context"
-	"errors"
-	"fmt"
 
 	"github.com/marco/pdf-extractext-repositorios/internal/domain"
 )
 
-var ErrNotImplemented = errors.New("not implemented yet")
-
 // DocumentService orquesta los casos de uso del microservicio.
-// CreatePending, CompleteWithSummary, Get* y List están implementados;
-// SoftDelete y Restore siguen pendientes (la API responde 501).
+// CreatePending, CompleteWithSummary, Get*, List, SoftDelete y Restore
+// están implementados.
 type DocumentService struct {
 	repo domain.DocumentRepository
 }
 
 func NewDocumentService(repo domain.DocumentRepository) *DocumentService {
 	return &DocumentService{repo: repo}
-}
-
-func unimplemented(what string) error {
-	return fmt.Errorf("%s: %w", what, ErrNotImplemented)
 }
 
 // notFoundIfDeleted aplica la regla única de visibilidad del servicio:
@@ -83,9 +75,9 @@ func (s *DocumentService) List(ctx context.Context, filter domain.ListFilter, pa
 }
 
 func (s *DocumentService) SoftDelete(ctx context.Context, documentID string) error {
-	return unimplemented("softDelete")
+	return s.repo.SoftDelete(ctx, documentID)
 }
 
 func (s *DocumentService) Restore(ctx context.Context, documentID string) error {
-	return unimplemented("restore")
+	return s.repo.Restore(ctx, documentID)
 }
