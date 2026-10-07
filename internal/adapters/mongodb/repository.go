@@ -156,6 +156,12 @@ func buildMongoFilter(f domain.ListFilter) bson.M {
 	if f.Status != nil {
 		m["status"] = *f.Status
 	}
+	if f.Filename != nil {
+		m["metadata.filename"] = bson.M{
+			"$regex":   *f.Filename,
+			"$options": "i",
+		}
+	}
 	return m
 }
 
