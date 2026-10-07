@@ -56,22 +56,24 @@ func TestRepository_Integration_UpdateStatus(t *testing.T) {
 	insertDoc(t, repo, integrationDoc("doc-1", "a.pdf", "PENDING", created))
 
 	summary := "resumen"
-	got, err := repo.UpdateStatus(context.Background(), "doc-1", domain.StatusCompleted, &summary)
+	got, err := repo.UpdateStatus(context.Background(), "doc-1", domain.StatusCompleted, &summary, 120)
 	require.NoError(t, err)
 	require.Equal(t, domain.StatusCompleted, got.Status)
 	require.Equal(t, &summary, got.Summary)
+	require.Equal(t, int64(120), got.SummaryTimeMS)
 	require.False(t, got.UpdatedAt.Before(created))
 
 	persisted, err := repo.FindByDocumentID(context.Background(), "doc-1")
 	require.NoError(t, err)
 	require.Equal(t, domain.StatusCompleted, persisted.Status)
 	require.Equal(t, &summary, persisted.Summary)
+	require.Equal(t, int64(120), persisted.SummaryTimeMS)
 }
 
 func TestRepository_Integration_UpdateStatus_NotFound(t *testing.T) {
 	repo := newIntegrationRepo(t)
 
-	_, err := repo.UpdateStatus(context.Background(), "missing", domain.StatusCompleted, nil)
+	_, err := repo.UpdateStatus(context.Background(), "missing", domain.StatusCompleted, nil, 0)
 
 	require.Equal(t, domain.ErrNotFound, err)
 }

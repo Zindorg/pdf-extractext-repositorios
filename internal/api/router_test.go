@@ -19,7 +19,7 @@ type fakeRepo struct {
 }
 
 func (fakeRepo) Insert(context.Context, domain.Document) error { return nil }
-func (fakeRepo) UpdateStatus(context.Context, string, domain.Status, *string) (*domain.Document, error) {
+func (fakeRepo) UpdateStatus(context.Context, string, domain.Status, *string, int64) (*domain.Document, error) {
 	return nil, nil
 }
 func (fakeRepo) FindByDocumentID(context.Context, string) (*domain.Document, error) {

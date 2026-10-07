@@ -39,7 +39,7 @@ func toResponse(doc domain.Document) DocumentResponse {
 		ExtractedText:    doc.ExtractedText,
 		Summary:          doc.Summary,
 		Metadata:         doc.Metadata,
-		ProcessingTimeMS: doc.ProcessingTimeMS,
+		ProcessingTimeMS: doc.ExtractionTimeMS + doc.SummaryTimeMS,
 		CreatedAt:        doc.CreatedAt,
 		UpdatedAt:        doc.UpdatedAt,
 	}

@@ -23,7 +23,8 @@ type Document struct {
 	ExtractedText    string     `json:"extracted_text"`
 	Summary          *string    `json:"summary"` // null mientras PENDING
 	Metadata         Metadata   `json:"metadata"`
-	ProcessingTimeMS int64      `json:"processing_time_ms"`
+	ExtractionTimeMS int64      `json:"extraction_time_ms"`
+	SummaryTimeMS    int64      `json:"summary_time_ms"`
 	CreatedAt        time.Time  `json:"created_at"`
 	UpdatedAt        time.Time  `json:"updated_at"`
 	DeletedAt        *time.Time `json:"deleted_at"` // soft-delete

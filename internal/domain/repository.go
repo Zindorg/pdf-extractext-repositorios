@@ -25,7 +25,7 @@ type ListFilter struct {
 // (el servicio normaliza antes de llamar).
 type DocumentRepository interface {
 	Insert(ctx context.Context, doc Document) error
-	UpdateStatus(ctx context.Context, documentID string, status Status, summary *string) (*Document, error)
+	UpdateStatus(ctx context.Context, documentID string, status Status, summary *string, summaryTimeMS int64) (*Document, error)
 	FindByDocumentID(ctx context.Context, documentID string) (*Document, error)
 	FindByChecksum(ctx context.Context, checksum string) (*Document, error)
 	List(ctx context.Context, filter ListFilter, page int, pageSize int) ([]Document, int64, error)

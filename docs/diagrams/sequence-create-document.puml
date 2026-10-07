@@ -17,11 +17,11 @@ participant "MongoDB" as MONGO
 
 == Fase 1 — Siempre llega el evento "original" ==
 
-ORQ -> REDIS : XADD document-events\n{event:"original", document_id,\nchecksum, extracted_text, metadata}
+ORQ -> REDIS : XADD document-events\n{event_type:"original", schema_version:1,\ndocument_id, checksum, extracted_text,\nextraction_time_ms, mime_type, summary_requested,\nsummary_status, metadata}
 REDIS -> CONSUMER : XREADGROUP (documents-persister)
 CONSUMER -> HANDLER : OnOriginal(event)
 
-HANDLER -> SERVICE : CreatePending(document_id, checksum,\nextracted_text, metadata)
+HANDLER -> SERVICE : CreatePending(document_id, checksum,\nextracted_text, extraction_time_ms, metadata)
 SERVICE -> REPO : Insert(Document{status: PENDING})
 REPO -> MONGO : insertOne( documents )
 alt checksum o document_id ya activo (duplicado real)
@@ -41,15 +41,15 @@ end
 alt **Variante B — sin resumen** (summarize=false)
     note over REDIS
         El documento queda PENDING almacenado.
-        No llega evento "summary". No hay timeout.
+        No llega evento "summary_resolved". No hay timeout.
     end note
 else **Variante A — con resumen** (summarize=true)
-    ORQ -> REDIS : XADD document-events\n{event:"summary", document_id, summary}
+    ORQ -> REDIS : XADD document-events\n{event_type:"summary_resolved", schema_version:1,\ndocument_id, summary, summary_time_ms, summary_status}
     REDIS -> CONSUMER : XREADGROUP (document-events)
-    CONSUMER -> HANDLER : OnSummary(event)
-    HANDLER -> SERVICE : CompleteWithSummary(document_id, summary)
+    CONSUMER -> HANDLER : OnSummaryResolved(event)
+    HANDLER -> SERVICE : CompleteWithSummary(document_id, summary, summary_time_ms)
     SERVICE -> REPO : UpdateStatus → COMPLETED
-    REPO -> MONGO : updateOne( documents )\n{status: COMPLETED, summary, updated_at}
+    REPO -> MONGO : updateOne( documents )\n{status: COMPLETED, summary,\nsummary_time_ms, updated_at}
     MONGO --> REPO : ok
     REPO --> SERVICE : Document{status: COMPLETED}
     SERVICE --> HANDLER : ok
@@ -58,7 +58,7 @@ else **Variante A — con resumen** (summarize=true)
 end
 
 alt resumen huérfano (document_id inexistente)
-    HANDLER -> SERVICE : CompleteWithSummary(document_id, summary)
+    HANDLER -> SERVICE : CompleteWithSummary(document_id, summary, summary_time_ms)
     SERVICE --> HANDLER : ErrNotFound
     HANDLER -> CONSUMER : retry (XAUTOCLAIM + backoff)\n→ agotado → copia a document-events-dlq
 end

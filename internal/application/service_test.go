@@ -43,13 +43,14 @@ func (r *inMemoryRepo) Insert(_ context.Context, doc domain.Document) error {
 
 // UpdateStatus persiste el cambio de estado (fake fiel del port):
 // inexistente → ErrNotFound (huérfano); existente → COMPLETED + updated_at.
-func (r *inMemoryRepo) UpdateStatus(_ context.Context, documentID string, status domain.Status, summary *string) (*domain.Document, error) {
+func (r *inMemoryRepo) UpdateStatus(_ context.Context, documentID string, status domain.Status, summary *string, summaryTimeMS int64) (*domain.Document, error) {
 	doc, ok := r.byID[documentID]
 	if !ok {
 		return nil, domain.ErrNotFound
 	}
 	doc.Status = status
 	doc.Summary = summary
+	doc.SummaryTimeMS = summaryTimeMS
 	doc.UpdatedAt = domain.Now()
 	r.byID[documentID] = doc
 	return &doc, nil
@@ -330,7 +331,8 @@ func TestCreatePending_StoresPendingDocument(t *testing.T) {
 		DocumentID:       "doc-1",
 		Checksum:         "abc123",
 		ExtractedText:    "contenido extraído",
-		ProcessingTimeMS: 42,
+		ExtractionTimeMS: 40,
+		SummaryTimeMS:    2,
 		Metadata: domain.Metadata{
 			Filename:  "informe.pdf",
 			MimeType:  "application/pdf",
@@ -351,7 +353,8 @@ func TestCreatePending_StoresPendingDocument(t *testing.T) {
 	require.Equal(t, payload.ExtractedText, stored.ExtractedText)
 	require.Equal(t, payload.Checksum, stored.Checksum)
 	require.Equal(t, payload.Metadata, stored.Metadata)
-	require.Equal(t, payload.ProcessingTimeMS, stored.ProcessingTimeMS)
+	require.Equal(t, payload.ExtractionTimeMS, stored.ExtractionTimeMS)
+	require.Equal(t, payload.SummaryTimeMS, stored.SummaryTimeMS)
 }
 
 func TestCreatePending_DuplicateChecksum(t *testing.T) {
@@ -390,12 +393,13 @@ func TestCompleteWithSummary_CompletesPendingDocument(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	got, err := svc.CompleteWithSummary(context.Background(), "doc-1", "resumen del doc")
+	got, err := svc.CompleteWithSummary(context.Background(), "doc-1", "resumen del doc", 120)
 	require.NoError(t, err)
 	require.NotNil(t, got)
 	require.Equal(t, domain.StatusCompleted, got.Status)
 	require.NotNil(t, got.Summary)
 	require.Equal(t, "resumen del doc", *got.Summary)
+	require.Equal(t, int64(120), got.SummaryTimeMS)
 	require.True(t, got.UpdatedAt.After(got.CreatedAt))
 }
 
@@ -403,7 +407,7 @@ func TestCompleteWithSummary_OrphanSummary_ReturnsErrNotFound(t *testing.T) {
 	repo := newInMemoryRepo()
 	svc := application.NewDocumentService(repo)
 
-	_, err := svc.CompleteWithSummary(context.Background(), "no-existe", "resumen huérfano")
+	_, err := svc.CompleteWithSummary(context.Background(), "no-existe", "resumen huérfano", 120)
 	require.ErrorIs(t, err, domain.ErrNotFound)
 }
 
@@ -414,17 +418,18 @@ func TestCompleteWithSummary_AlreadyCompleted_IsBenign(t *testing.T) {
 	_, err := svc.CreatePending(context.Background(), domain.Document{DocumentID: "doc-1", Checksum: "abc123"})
 	require.NoError(t, err)
 
-	_, err = svc.CompleteWithSummary(context.Background(), "doc-1", "primera vez")
+	_, err = svc.CompleteWithSummary(context.Background(), "doc-1", "primera vez", 120)
 	require.NoError(t, err)
 
 	// Duplicado legítimo (entrega at-least-once): sin error → consumer hace XACK + descarte.
-	_, err = svc.CompleteWithSummary(context.Background(), "doc-1", "otra vez")
+	_, err = svc.CompleteWithSummary(context.Background(), "doc-1", "otra vez", 200)
 	require.NoError(t, err)
 
 	stored, err := repo.FindByDocumentID(context.Background(), "doc-1")
 	require.NoError(t, err)
 	require.Equal(t, domain.StatusCompleted, stored.Status)
 	require.Equal(t, "primera vez", *stored.Summary)
+	require.Equal(t, int64(120), stored.SummaryTimeMS)
 }
 
 // insertSoftDeleted guarda un documento ya borrado (soft delete) vía el fake,

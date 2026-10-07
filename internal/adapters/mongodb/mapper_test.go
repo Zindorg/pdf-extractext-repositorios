@@ -19,7 +19,8 @@ func TestPersistedRoundTrip(t *testing.T) {
 		ExtractedText:    "texto",
 		Summary:          &summary,
 		Metadata:         domain.Metadata{Filename: "x.pdf", MimeType: "application/pdf", SizeBytes: 10, PageCount: 2},
-		ProcessingTimeMS: 5,
+		ExtractionTimeMS: 3,
+		SummaryTimeMS:    2,
 		CreatedAt:        created,
 		UpdatedAt:        created,
 		DeletedAt:        &deletedAt,
@@ -33,7 +34,8 @@ func TestPersistedRoundTrip(t *testing.T) {
 	require.Equal(t, doc.ExtractedText, got.ExtractedText)
 	require.Equal(t, doc.Summary, got.Summary)
 	require.Equal(t, doc.Metadata, got.Metadata)
-	require.Equal(t, doc.ProcessingTimeMS, got.ProcessingTimeMS)
+	require.Equal(t, doc.ExtractionTimeMS, got.ExtractionTimeMS)
+	require.Equal(t, doc.SummaryTimeMS, got.SummaryTimeMS)
 	require.Equal(t, doc.CreatedAt, got.CreatedAt)
 	require.Equal(t, doc.UpdatedAt, got.UpdatedAt)
 	require.Equal(t, doc.DeletedAt, got.DeletedAt)

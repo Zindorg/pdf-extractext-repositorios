@@ -51,12 +51,13 @@ func mapInsertError(err error) error {
 	}
 }
 
-func (r *MongoDocumentRepository) UpdateStatus(ctx context.Context, documentID string, status domain.Status, summary *string) (*domain.Document, error) {
+func (r *MongoDocumentRepository) UpdateStatus(ctx context.Context, documentID string, status domain.Status, summary *string, summaryTimeMS int64) (*domain.Document, error) {
 	filter := bson.M{"document_id": documentID}
 	update := bson.M{"$set": bson.M{
-		"status":     string(status),
-		"summary":    summary,
-		"updated_at": domain.Now(),
+		"status":          string(status),
+		"summary":         summary,
+		"summary_time_ms": summaryTimeMS,
+		"updated_at":      domain.Now(),
 	}}
 
 	res := r.collection.FindOneAndUpdate(ctx, filter, update,

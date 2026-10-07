@@ -22,7 +22,8 @@ type persistedDocument struct {
 	ExtractedText    string        `bson:"extracted_text"`
 	Summary          *string       `bson:"summary"`
 	Metadata         metadataBSON  `bson:"metadata"`
-	ProcessingTimeMS int64         `bson:"processing_time_ms"`
+	ExtractionTimeMS int64         `bson:"extraction_time_ms"`
+	SummaryTimeMS    int64         `bson:"summary_time_ms"`
 	CreatedAt        time.Time     `bson:"created_at"`
 	UpdatedAt        time.Time     `bson:"updated_at"`
 	DeletedAt        *time.Time    `bson:"deleted_at,omitempty"`
@@ -36,7 +37,8 @@ func toPersisted(doc domain.Document) persistedDocument {
 		ExtractedText:    doc.ExtractedText,
 		Summary:          doc.Summary,
 		Metadata:         metadataBSON(doc.Metadata),
-		ProcessingTimeMS: doc.ProcessingTimeMS,
+		ExtractionTimeMS: doc.ExtractionTimeMS,
+		SummaryTimeMS:    doc.SummaryTimeMS,
 		CreatedAt:        doc.CreatedAt,
 		UpdatedAt:        doc.UpdatedAt,
 		DeletedAt:        doc.DeletedAt,
@@ -51,7 +53,8 @@ func toDomain(p persistedDocument) domain.Document {
 		ExtractedText:    p.ExtractedText,
 		Summary:          p.Summary,
 		Metadata:         domain.Metadata(p.Metadata),
-		ProcessingTimeMS: p.ProcessingTimeMS,
+		ExtractionTimeMS: p.ExtractionTimeMS,
+		SummaryTimeMS:    p.SummaryTimeMS,
 		CreatedAt:        p.CreatedAt,
 		UpdatedAt:        p.UpdatedAt,
 		DeletedAt:        p.DeletedAt,

@@ -26,7 +26,8 @@ package "Dominio (internal/domain)" {
     +extracted_text: string
     +summary: *string
     +metadata: Metadata
-    +processing_time_ms: int64
+    +extraction_time_ms: int64
+    +summary_time_ms: int64
     +created_at: time.Time
     +updated_at: time.Time
     +deleted_at: *time.Time
@@ -36,7 +37,7 @@ package "Dominio (internal/domain)" {
 
   interface DocumentRepository {
     +Insert(ctx: Context, doc: Document) error
-    +UpdateStatus(ctx: Context, documentID: string, status: Status, summary: *string) (*Document, error)
+    +UpdateStatus(ctx: Context, documentID: string, status: Status, summary: *string, summaryTimeMS: int64) (*Document, error)
     +FindByDocumentID(ctx: Context, documentID: string) (*Document, error)
     +FindByChecksum(ctx: Context, checksum: string) (*Document, error)
     +List(ctx: Context, filter: ListFilter, page: int, pageSize: int) ([]Document, int64, error)
@@ -54,7 +55,7 @@ package "Aplicación (internal/application)" {
   class DocumentService {
     -repo: DocumentRepository
     +CreatePending(params) (*Document, error)
-    +CompleteWithSummary(documentID: string, summary: string) (*Document, error)
+    +CompleteWithSummary(documentID: string, summary: string, summaryTimeMS: int64) (*Document, error)
     +GetByDocumentID(documentID: string) (*Document, error)
     +GetByChecksum(checksum: string) (*Document, error)
     +List(filter, page, pageSize) ([]Document, int64, error)
@@ -74,7 +75,7 @@ package "Adaptadores (internal/adapters)" {
       -mapper: Mapper
       +EnsureIndexes(ctx) error
       +Insert(ctx, doc) error
-      +UpdateStatus(ctx, documentID, status, summary) (*Document, error)
+      +UpdateStatus(ctx, documentID, status, summary, summaryTimeMS) (*Document, error)
       +FindByDocumentID(ctx, documentID) (*Document, error)
       +FindByChecksum(ctx, checksum) (*Document, error)
       +List(ctx, filter, page, pageSize) ([]Document, int64, error)
@@ -95,7 +96,8 @@ package "Adaptadores (internal/adapters)" {
       +extracted_text: string
       +summary: *string
       +metadata: metadataBSON
-      +processing_time_ms: int64
+      +extraction_time_ms: int64
+      +summary_time_ms: int64
       +created_at: time.Time
       +updated_at: time.Time
       +deleted_at: *time.Time
@@ -126,7 +128,7 @@ package "Adaptadores (internal/adapters)" {
 
     class MessageHandlers {
       +OnOriginal(event OriginalEvent) error
-      +OnSummary(event SummaryEvent) error
+      +OnSummaryResolved(event SummaryResolvedEvent) error
     }
 
     class RetryDLQ {
@@ -136,24 +138,34 @@ package "Adaptadores (internal/adapters)" {
     }
 
     class OriginalEvent {
+      +event_type: string
       +event: string
+      +schema_version: int
       +document_id: string
       +checksum: string
       +extracted_text: string
+      +extraction_time_ms: int64
+      +mime_type: string
+      +summary_requested: bool
+      +summary_status: string
       +metadata: Metadata
     }
 
-    class SummaryEvent {
+    class SummaryResolvedEvent {
+      +event_type: string
       +event: string
+      +schema_version: int
       +document_id: string
       +summary: string
+      +summary_time_ms: int64
+      +summary_status: string
     }
 
     StreamConsumer *-- MessageHandlers
     StreamConsumer ..> RetryDLQ
     MessageHandlers ..> DocumentService
     MessageHandlers ..> OriginalEvent
-    MessageHandlers ..> SummaryEvent
+    MessageHandlers ..> SummaryResolvedEvent
   }
 }
 

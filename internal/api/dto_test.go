@@ -18,7 +18,8 @@ func TestToResponse(t *testing.T) {
 		ExtractedText:    "texto",
 		Summary:          &summary,
 		Metadata:         domain.Metadata{Filename: "x.pdf", MimeType: "application/pdf", SizeBytes: 10, PageCount: 2},
-		ProcessingTimeMS: 5,
+		ExtractionTimeMS: 3,
+		SummaryTimeMS:    2,
 		CreatedAt:        created,
 		UpdatedAt:        created,
 	}
@@ -31,6 +32,7 @@ func TestToResponse(t *testing.T) {
 	require.Equal(t, "texto", got.ExtractedText)
 	require.Equal(t, &summary, got.Summary)
 	require.Equal(t, doc.Metadata, got.Metadata)
+	// processing_time_ms = extraction + summary (la API expone la suma total)
 	require.Equal(t, int64(5), got.ProcessingTimeMS)
 	require.Equal(t, created, got.CreatedAt)
 	require.Equal(t, created, got.UpdatedAt)

@@ -3,7 +3,7 @@
 > Documento rector del proyecto. Mantener actualizado junto con el código.
 > Última revisión: 2026-10-07. Alineado con `Especificaciones_v3.md` (hub & spoke, aislamiento de BD y zero-disk) + decisiones propias de este microservicio (dedup por checksum, ciclo de vida PENDING/COMPLETED).
 >
-> **Estado de implementación**: operativos — conexiones Mongo/Redis, índices, `CreatePending`/`CompleteWithSummary`/`Get*`/`List` (service + puerto) y `/health`. Pendientes (fase de lógica) — loop de consumo del stream, soft-delete/restore, descargas y listado vía API (responden `501`), canal de retries/DLQ. Las secciones siguientes describen el contrato objetivo; §10 marca el estado por endpoint.
+> **Estado de implementación**: operativos — conexiones Mongo/Redis, índices, `CreatePending`/`CompleteWithSummary`/`Get*`/`List`, soft-delete/restore (service + API) y `/health`. Pendientes (fase de lógica) — loop de consumo del stream, canal de retries/DLQ, descargas y listado vía API (responden `501`). Las secciones siguientes describen el contrato objetivo; §10 marca el estado por endpoint.
 
 ## 1. Tipo de arquitectura
 
@@ -66,7 +66,7 @@ document-events-dlq                  solo red interna
 
 **Flujo de este microservicio:**
 
-1. **Escritura (async)** — `Orquestador --XADD--> Redis --XREADGROUP--> Persistidor`: el Orquestador publica `original` (y `summary` si `summarize=true`); el consumer las procesa por `document_id`.
+1. **Escritura (async)** — `Orquestador --XADD--> Redis --XREADGROUP--> Persistidor`: el Orquestador publica `original` (y `summary_resolved` si `summarize=true`); el consumer las procesa por `document_id`.
 2. **Lectura/borrado (sync)** — `Orquestador --HTTP interno--> Persistidor` (`http://persister:8083`): responde texto/summary, descargas, soft-delete, restore y health bajo demanda del Orquestador.
 3. **Persistencia (BSON)** — `Persistidor --BSON--> MongoDB` (`db-net`, aislada): el driver oficial usa BSON hacia la colección `documents`.
 
@@ -77,33 +77,36 @@ document-events-dlq                  solo red interna
 ## 4. Flujo de ingesta (dos fases por `document_id`)
 
 ```
-FASE 1 — ORIGINAL                     FASE 2 — SUMMARY
+FASE 1 — ORIGINAL                     FASE 2 — SUMMARY RESOLVED
 ─────────────────────────             ─────────────────────────
-event: "original"                     event: "summary"
+event_type: "original"                event_type: "summary_resolved"
+schema_version: 1                     schema_version: 1
 document_id  (UUID)                   document_id  (UUID)
 checksum     (sha256 extracted_text)  summary      (string)
-extracted_text                        │
+extracted_text                        summary_time_ms
+extraction_time_ms
+mime_type    (top-level)              │
 metadata                               │
   filename                            │
-  mime_type                           │
   size_bytes                          │
   page_count                          ▼
              ┌──────────────────────────────────────────┐
              │  consumer document-events/documents-*     │
              │                                          │
-             │  original  → insert PENDING              │
-             │  summary   → update → COMPLETED          │
+             │  original        → insert PENDING        │
+             │  summary_resolved → update → COMPLETED   │
              └──────────────────────────────────────────┘
 ```
 
 | Evento | Acción | Duplicado | Resumen huérfano |
 |---|---|---|---|
 | `original` | Insert doc `PENDING` | `document_id` o `checksum` activo ya existe ⇒ **ACK + descarte** (no es error) | — |
-| `summary` | Update por `document_id` → `COMPLETED` (+ `summary`, `updated_at`) | Ya `COMPLETED` ⇒ **ACK + descarte** | `document_id` inexistente ⇒ **retry con backoff** (`XAUTOCLAIM`) → **DLQ** |
+| `summary_resolved` | Update por `document_id` → `COMPLETED` (+ `summary`, `summary_time_ms`, `updated_at`) | Ya `COMPLETED` ⇒ **ACK + descarte** | `document_id` inexistente ⇒ **retry con backoff** (`XAUTOCLAIM`) → **DLQ** |
 
-- **Solo se escribe por eventos**: no existe un endpoint REST de creación. Si `summarize=false` el Orquestador nunca encola `summary` y el documento queda `PENDING` **sin timeout** (decisión de negocio explícita): se guarda indefinidamente con su checksum ocupado.
+- **Solo se escribe por eventos**: no existe un endpoint REST de creación. Si `summarize=false` el Orquestador nunca encola `summary_resolved` y el documento queda `PENDING` **sin timeout** (decisión de negocio explícita): se guarda indefinidamente con su checksum ocupado.
 - Los **duplicados legítimos** (re-entrega at-least-once de eventos ya procesados) ⇒ **ACK + descarte**; en la API REST un alta manual duplicada devolvería `409 Conflict`.
-- Mensajes inválidos (validación) ⇒ retry → DLQ.
+- Mensajes inválidos (validación, p.ej. `schema_version != 1`) ⇒ **retry → DLQ**, nunca tratar como éxito.
+- Discriminador tolerante: se despacha por `event_type` si viene; si no, por `event`; ambos presentes deben coincidir. Ver ADR-007.
 
 ---
 
@@ -224,7 +227,8 @@ type Document struct {
     ExtractedText    string    `json:"extracted_text"`
     Summary          *string   `json:"summary"`        // null mientras PENDING
     Metadata         Metadata  `json:"metadata"`
-    ProcessingTimeMS int64     `json:"processing_time_ms"`
+    ExtractionTimeMS int64     `json:"extraction_time_ms"`
+    SummaryTimeMS    int64     `json:"summary_time_ms"`
     CreatedAt        time.Time `json:"created_at"`
     UpdatedAt        time.Time `json:"updated_at"`
     DeletedAt        *time.Time `json:"deleted_at"`    // soft-delete
@@ -242,7 +246,8 @@ type persistedDocument struct {
     ExtractedText    string             `bson:"extracted_text"`
     Summary          *string            `bson:"summary"`
     Metadata         metadata           `bson:"metadata"`
-    ProcessingTimeMS int64              `bson:"processing_time_ms"`
+    ExtractionTimeMS int64              `bson:"extraction_time_ms"`
+    SummaryTimeMS    int64              `bson:"summary_time_ms"`
     CreatedAt        time.Time          `bson:"created_at"`
     UpdatedAt        time.Time          `bson:"updated_at"`
     DeletedAt        *time.Time         `bson:"deleted_at"`
@@ -266,7 +271,7 @@ type persistedDocument struct {
 - **Dos identidades separadas**: `document_id` (UUID) es la clave pública de negocio (index única no parcial); `_id` (ObjectId) es interna de Mongo y nunca sale hacia la API.
 - **Deduplicación a nivel de BD**: índice único parcial sobre `checksum` (filter `deleted_at: null`). Insertar un checksum ya activo → error del driver código `11000` → `409 Conflict`.
 - **Dedup por contenido**: `checksum = SHA-256(extracted_text)`, calculado por el **productor** (Orquestador); este servicio lo persiste tal cual (fuente de verdad del valor, no lo recalcula).
-- **`processing_time_ms`**: lo registra el Orquestador (tiempo total de extracción+resumen) y viaja en el evento `original`; el Persistidor solo lo almacena (valor informativo, conforme `Especificaciones_v3.md` §6.B).
+- **Tiempos de cómputo**: el Orquestador registra `extraction_time_ms` (evento `original`) y `summary_time_ms` (evento `summary_resolved`); el Persistidor los almacena por separado. Solo la capa API de lectura los suma como `processing_time_ms` (valor informativo, conforme `Especificaciones_v3.md` §6.B). See ADR-007.
 - **Status** como ciclo de vida: `PENDING` (llegó el original) → `COMPLETED` (llegó el resumen). No hay timeout: un `PENDING` conserva su checksum ocupado.
 - **Soft delete** como estado (`deleted_at`), no borrado físico: un doc borrado sale del índice parcial → **libera** su checksum → permite re-ingerir el mismo contenido con un **nuevo** `document_id`.
 - **Restore**: re-activar (unset `deleted_at`) colisiona en el índice único con un nuevo activo ya re-ingerido → `11000` → `ErrRestoreConflict` → `409`. El índice es la fuente de verdad, sin carreras.
@@ -282,28 +287,34 @@ GROUP   documents-persister (created by the app al arrancar)
 
 Mensaje "original":
 {
-  "event": "original",
+  "event_type": "original",
+  "schema_version": 1,
   "document_id": "c9bf9e57-1685-4c89-bafb-ff5af830be8a",
   "checksum": "a6f3…64hex",
   "extracted_text": "…texto extraído…",
-  "processing_time_ms": 342,
+  "extraction_time_ms": 342,
+  "mime_type": "application/pdf",
+  "summary_requested": true,
+  "summary_status": "PENDING",
   "metadata": { "filename": "informe_financiero.pdf",
-                "mime_type": "application/pdf",
                 "size_bytes": 2048576,
                 "page_count": 12 }
 }
 
-Mensaje "summary":
+Mensaje "summary_resolved":
 {
-  "event": "summary",
+  "event_type": "summary_resolved",
+  "schema_version": 1,
   "document_id": "c9bf9e57-1685-4c89-bafb-ff5af830be8a",
-  "summary": "…resumen…"
+  "summary": "…resumen…",
+  "summary_time_ms": 120,
+  "summary_status": "RESOLVED"
 }
 
 DLQ  document-events-dlq   (copia del mensaje + causa cuando agota retries)
 ```
 
-**Semántica de consumo**: consumer group con entregas *at-least-once*. Procesar ⇒ `XACK`. Fallo recuperable ⇒ reinversión con `XAUTOCLAIM` y backoff (max retries); pasado el límite ⇒ copia a `document-events-dlq` + `XACK` para no bloquear el group. Duplicados legítimos (mismo `document_id`/`checksum` activo, o `summary` sobre un `COMPLETED`) ⇒ `XACK` + descarte silencioso.
+**Semántica de consumo**: consumer group con entregas *at-least-once*. Procesar ⇒ `XACK`. Fallo recuperable ⇒ reinversión con `XAUTOCLAIM` y backoff (max retries); pasado el límite ⇒ copia a `document-events-dlq` + `XACK` para no bloquear el group. Duplicados legítimos (mismo `document_id`/`checksum` activo, o `summary_resolved` sobre un `COMPLETED`) ⇒ `XACK` + descarte silencioso. Mensajes inválidos (`schema_version != 1`, JSON o campos requeridos rotos) ⇒ **retry → DLQ**, nunca éxito. Discriminador tolerante `event_type`/`event` (ADR-007).
 
 ---
 
@@ -311,7 +322,7 @@ DLQ  document-events-dlq   (copia del mensaje + causa cuando agota retries)
 
 > **Accesible solo por el Orquestador** por URL de red interna (`http://persister:8083`). No se expone por Traefik. La creación NO usa HTTP: llega por stream (§4/§9).
 >
-> **Estado (2026-10-07)**: `/health` implementado; el resto de endpoints responde `501` (fase de lógica pendiente). La tabla es el contrato final.
+> **Estado (2026-10-07)**: `/health`, lectura por `document_id`/`checksum`, listado, soft-delete y restore implementados. Pendientes (responden `501`): descargas `download/original` y `download/summary`. La tabla es el contrato final.
 
 | Método | Ruta | Request | Éxito | Errores |
 |---|---|---|---|---|
@@ -350,6 +361,7 @@ Live en `docs/adr/`:
 - **ADR-004 — PENDING sin timeout + retry/DLQ**: un documento sin resumen queda guardado indefinidamente con su checksum ocupado; los mensajes fallidos usan `XAUTOCLAIM` con backoff y luego `document-events-dlq`.
 - **ADR-005 — Go + MongoDB + Redis**: Go 1.26 (binario estático), MongoDB 8 data-per-service aislado en `db-net`, Redis Streams como canal de ingesta del ecosistema.
 - **ADR-006 — Hub & Spoke con URL interna (no Traefik en este servicio)**: este microservicio NO se expone por Traefik; el Orquestador lo alcanza por nombre de servicio Docker (`http://persister:8083`), cumpliendo "URL, nunca IP" sin romper el aislamiento (spec §2.1/§7). Traefik solo enruta hacia el Orquestador (red pública).
+- **ADR-007 — Reconocimiento del contrato de eventos del Orquestador (delta-persister)**: se adoptan los deltas 1–6 (`summary_resolved`, `extraction_time_ms`/`summary_time_ms`, `schema_version`, `event_type` con fallback a `event`, `summary_requested`/`summary_status`, `mime_type` top-level); se difieren 7 (request-id) y 12 (`summary_pending` 409) a slices posteriores. Mensajes inválidos ⇒ retry → DLQ; sin idempotencia por `event_id`.
 
 ---
 
