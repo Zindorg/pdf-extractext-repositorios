@@ -70,9 +70,9 @@ Composes individuales: `make compose-mongo`, `make compose-redis`, `make compose
 Solo lectura/borrado; no hay `POST /documents` (la creación llega por stream).
 
 > **Estado actual (2026-10-07)**: `/health`, lectura por `id`/`checksum`,
-> listado, soft-delete y restore implementados. Pendientes (responden `501`):
-> descargas `download/original` y `download/summary`. La tabla describe el
-> resto del contrato final.
+> listado, descargas, soft-delete y restore implementados (sin endpoints en
+> `501`). Pendientes: request-ID, decisión Swagger, smoke e2e contra compose
+> (etapa final). La tabla describe el contrato real.
 
 | Método | Ruta                                        | Respuesta                     |
 | ------ | ------------------------------------------- | ----------------------------- |

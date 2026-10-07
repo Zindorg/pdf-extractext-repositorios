@@ -3,7 +3,7 @@
 > Documento rector del proyecto. Mantener actualizado junto con el código.
 > Última revisión: 2026-10-07. Alineado con `Especificaciones_v3.md` (hub & spoke, aislamiento de BD y zero-disk) + decisiones propias de este microservicio (dedup por checksum, ciclo de vida PENDING/COMPLETED).
 >
-> **Estado de implementación**: operativos — conexiones Mongo/Redis, índices, `CreatePending`/`CompleteWithSummary`/`Get*`/`List`, soft-delete/restore (service + API), `/health` y el loop de consumo del stream (ACK/retry/DLQ). Pendientes (responden `501`): descargas. Las secciones siguientes describen el contrato objetivo; §10 marca el estado por endpoint.
+> **Estado de implementación**: operativos — conexiones Mongo/Redis, índices, `CreatePending`/`CompleteWithSummary`/`Get*`/`List`/descargas HTTP (service + API), soft-delete/restore (service + API), `/health` y el loop de consumo del stream (ACK/retry/DLQ). Sin endpoints en `501`. Pendientes: request-ID (delta 7), decisión Swagger, smoke e2e contra compose (etapa final). §10 es el contrato real por endpoint.
 
 ## 1. Tipo de arquitectura
 
@@ -322,14 +322,14 @@ DLQ  document-events-dlq   (copia del mensaje + causa cuando agota retries)
 
 > **Accesible solo por el Orquestador** por URL de red interna (`http://persister:8083`). No se expone por Traefik. La creación NO usa HTTP: llega por stream (§4/§9).
 >
-> **Estado (2026-10-07)**: `/health`, lectura por `document_id`/`checksum`, listado, soft-delete y restore implementados. Pendientes (responden `501`): descargas `download/original` y `download/summary`. La tabla es el contrato final.
+> **Estado (2026-10-07)**: `/health`, lectura por `document_id`/`checksum`, listado, descargas, soft-delete y restore implementados. No quedan endpoints en `501`. La tabla es el contrato real.
 
 | Método | Ruta | Request | Éxito | Errores |
 |---|---|---|---|---|
 | GET | `/documents/{document_id}` | — | `200` + documento (`extracted_text`, `summary`, `metadata`, `processing_time_ms`) | `400` · `404` |
 | GET | `/documents/checksum/{checksum}` | — | `200` + doc | `400` · `404` |
-| GET | `/documents/{document_id}/download/original` | — | `200` `text/plain` + `Content-Disposition` (RFC 5987) | `400` · `404` |
-| GET | `/documents/{document_id}/download/summary` | — | `200` `text/plain` + `Content-Disposition` | `400` · `404` · `409` aún `PENDING` |
+| GET | `/documents/{document_id}/download/original` | — | `200` `text/plain` + `Content-Disposition` (RFC 5987, filename del metadata) | `400` · `404` |
+| GET | `/documents/{document_id}/download/summary` | — | `200` `text/plain` + `Content-Disposition` (RFC 5987, `summary-{id}.txt`) | `400` · `404` · `409` code `summary_pending` (aún `PENDING`) |
 | GET | `/documents` | `page, page_size, status, filename, created_from, created_to, include_deleted` | `200` `{items, total, page, page_size}` | `400` |
 | DELETE | `/documents/{document_id}` | — | `204` (soft) | `400` · `404` |
 | POST | `/documents/{document_id}/restore` | — | `204` | `400` · `404` · `409` conflicto checksum |
@@ -338,6 +338,8 @@ DLQ  document-events-dlq   (copia del mensaje + causa cuando agota retries)
 > **Nota de diseño**: no hay `POST /documents`. La escritura es evento-dirigida (hub & spoke). Si más adelante se quisiera una vía REST de alta, se agregaría como decisión formal (ADR) y devolvería `409` ante checksum/document_id activo.
 
 Envelope de error consistente: `{"code": "...", "message": "...", "details": {...}}`. Paginación default 20, máx 100. Listado excluye soft-deleted por defecto.
+
+> **Sobre los `400`**: en las rutas con parámetro de path (`{document_id}`, `{checksum}`) el `400` es contractual pero **no alcanzable** — Gin garantiza parámetro no vacío. El único `400` real (`code: BAD_REQUEST`) es la validación de la query de `List` (status/fechas/paginación inválidos). El `409` de `download/summary` emite `code: summary_pending` (code literal del Orquestador, delta 12).
 
 ---
 
@@ -361,7 +363,7 @@ Live en `docs/adr/`:
 - **ADR-004 — PENDING sin timeout + retry/DLQ**: un documento sin resumen queda guardado indefinidamente con su checksum ocupado; los mensajes fallidos usan `XAUTOCLAIM` con backoff y luego `document-events-dlq`.
 - **ADR-005 — Go + MongoDB + Redis**: Go 1.26 (binario estático), MongoDB 8 data-per-service aislado en `db-net`, Redis Streams como canal de ingesta del ecosistema.
 - **ADR-006 — Hub & Spoke con URL interna (no Traefik en este servicio)**: este microservicio NO se expone por Traefik; el Orquestador lo alcanza por nombre de servicio Docker (`http://persister:8083`), cumpliendo "URL, nunca IP" sin romper el aislamiento (spec §2.1/§7). Traefik solo enruta hacia el Orquestador (red pública).
-- **ADR-007 — Reconocimiento del contrato de eventos del Orquestador (delta-persister)**: se adoptan los deltas 1–6 (`summary_resolved`, `extraction_time_ms`/`summary_time_ms`, `schema_version`, `event_type` con fallback a `event`, `summary_requested`/`summary_status`, `mime_type` top-level); se difieren 7 (request-id) y 12 (`summary_pending` 409) a slices posteriores. Mensajes inválidos ⇒ retry → DLQ; sin idempotencia por `event_id`.
+- **ADR-007 — Reconocimiento del contrato de eventos del Orquestador (delta-persister)**: se adoptan los deltas 1–6 (`summary_resolved`, `extraction_time_ms`/`summary_time_ms`, `schema_version`, `event_type` con fallback a `event`, `summary_requested`/`summary_status`, `mime_type` top-level); se aplican 8–12 (red/prefix/consumo ya hechos; el 12 —`summary_pending` 409— en el Slice 7) y se difiere solo el 7 (request-id). Mensajes inválidos ⇒ retry → DLQ; sin idempotencia por `event_id`.
 
 ---
 

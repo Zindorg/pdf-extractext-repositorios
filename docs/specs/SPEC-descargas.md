@@ -35,7 +35,7 @@ por diseño, ADR-001).
 | D1 | El `409` de `download/summary` usa `code: summary_pending` | Delta 12 del Orquestador, diferido a este slice en ADR-007. Se aplica en la **única** tabla `errorMappings` (`SUMMARY_NOT_READY` → `SUMMARY_PENDING`) y se renombra el sentinel `ErrSummaryNotReady` → `ErrSummaryPending` por coherencia. |
 | D2 | `Content-Type` de descargas: `text/plain; charset=utf-8` | Contrato §10: éxito `text/plain`. |
 | D3 | `Content-Disposition`: `attachment; filename*=UTF-8''…` (RFC 5987) | Filename del original = `Metadata.Filename` (fallback `document-{id}.txt`); filename del resumen = `summary-{document_id}.txt`. Codificación percent de la cadena UTF-8 (`url.PathEscape`). |
-| D4 | Errores de **validación HTTP** (query de `List`, ids vacíos) → `400` con `code: BAD_REQUEST` | No son errores de dominio: no pasan por `errorMappings` (esa tabla es solo para errores de dominio). Envelope estándar `{"code","message","details"}`. |
+| D4 | Errores de **validación HTTP** (query de `List`: paginación/status/fechas) → `400` con `code: BAD_REQUEST` | No son errores de dominio: no pasan por `errorMappings` (esa tabla es solo para errores de dominio). Envelope estándar `{"code","message","details"}`. |
 | D5 | `page`/`page_size` no numéricos → `400`; vacíos → defaults del domain | Contrato `400`; la normalización de defaults ya vive en el servicio. |
 | D6 | `status` inválido (`≠ PENDING|COMPLETED`) y `created_from`/`created_to` no RFC3339 → `400` | Evitar que el repo reciba filtros malformados. |
 | D7 | Soft-deleted → `404` en todos los endpoints (incl. descargas) | Regla única de visibilidad del servicio (`notFoundIfDeleted`). |
@@ -47,11 +47,16 @@ Envelope de error consistente: `{"code":"…","message":"…","details":{…}}`.
 
 | Ruta | Éxito | Errores |
 |---|---|---|
-| `/documents/{document_id}` | `200` + `DocumentResponse` | `400` id vacío · `404` |
-| `/documents/checksum/{checksum}` | `200` + `DocumentResponse` | `400` checksum vacío · `404` |
+| `/documents/{document_id}` | `200` + `DocumentResponse` | `400` · `404` |
+| `/documents/checksum/{checksum}` | `200` + `DocumentResponse` | `400` · `404` |
 | `/documents` | `200` `{items,total,page,page_size}` | `400` query inválida (D4–D6) |
 | `/documents/{id}/download/original` | `200` texto plano + `Content-Disposition` | `400` · `404` |
 | `/documents/{id}/download/summary` | `200` texto plano + `Content-Disposition` | `400` · `404` · `409` `summary_pending` |
+
+> **Nota post-implementación (2026-10-07)**: el `400` de las filas con parámetro
+> de path es contractual pero **no alcanzable** — Gin garantiza parámetro no
+> vacío, por lo que no se añadió ningún guard muerto (YAGNI). El único `400`
+> real es la query de `List` (`code: BAD_REQUEST`).
 
 `DocumentResponse` ya existe (`internal/api/dto.go`): expone `processing_time_ms`
 (= `extraction_time_ms + summary_time_ms`), `metadata`, `summary`; nunca el `_id`

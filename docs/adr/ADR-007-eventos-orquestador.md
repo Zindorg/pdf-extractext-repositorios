@@ -22,7 +22,7 @@ con la tabla de evaluación siguiente. Cada fila del delta queda categorizada:
 | 9 | Prefijo `/api/v1` | Ya hecho (Slices anteriores) |
 | 10 | Alias/dominio compose | Ya definido |
 | 11 | Ruta consumo Orquestador | Sin impacto |
-| 12 | `code: summary_pending` con 409 | Diferir a slice de descargas |
+| 12 | `code: summary_pending` con 409 | Aplicado (Slice 7: descargas); el 409 de `download/summary` usa el code literal `summary_pending` del Orquestador |
 
 ## Consecuencias y reglas
 
@@ -46,8 +46,9 @@ con la tabla de evaluación siguiente. Cada fila del delta queda categorizada:
 - **No adoptar (contrato propio)**: mantenía `processing_time_ms` y `event:
   original/summary`, pero rompía la integración con el Orquestador al primer
   evento real. Rechazada.
-- **Adoptar todo (incluidas filas 7 y 12)**: sobre-ingeniería; la fila 7
-  depende de un middleware pendiente y la 12 de la fase de descargas. Diferidas.
+- **Adoptar todo (incluida fila 7)**: sobre-ingeniería; la fila 7 depende de un
+  middleware de request-ID pendiente. Diferida. La fila 12 se aplicó en el Slice 7
+  (descargas) con el code literal `summary_pending`.
 
 ## Referencias
 
