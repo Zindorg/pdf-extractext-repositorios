@@ -25,8 +25,6 @@ func TestBusinessEndpointsNotImplemented(t *testing.T) {
 		{name: "list", method: http.MethodGet, path: "/api/v1/documents"},
 		{name: "download original", method: http.MethodGet, path: "/api/v1/documents/abc/download/original"},
 		{name: "download summary", method: http.MethodGet, path: "/api/v1/documents/abc/download/summary"},
-		{name: "soft delete", method: http.MethodDelete, path: "/api/v1/documents/abc"},
-		{name: "restore", method: http.MethodPost, path: "/api/v1/documents/abc/restore"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

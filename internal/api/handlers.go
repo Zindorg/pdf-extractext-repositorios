@@ -24,9 +24,9 @@ type DocumentUseCases interface {
 	Restore(ctx context.Context, documentID string) error
 }
 
-// DocumentHandler expone los endpoints internos de lectura/borrado.
-// En esta fase responde 501 para toda la lógica pendiente; /health
-// ya verifica dependencias reales.
+// DocumentHandler expone los endpoints internos de lectura/escritura.
+// SoftDelete y Restore ya operan (204/404/409); /health verifica dependencias.
+// GetByDocumentID, GetByChecksum, List y los descargables siguen en 501.
 type DocumentHandler struct {
 	service DocumentUseCases
 	health  HealthChecker
@@ -57,11 +57,19 @@ func (h *DocumentHandler) DownloadSummary(c *gin.Context) {
 }
 
 func (h *DocumentHandler) SoftDelete(c *gin.Context) {
-	notImplemented(c)
+	if err := h.service.SoftDelete(c.Request.Context(), c.Param("document_id")); err != nil {
+		abortWithError(c, err)
+		return
+	}
+	c.Status(http.StatusNoContent)
 }
 
 func (h *DocumentHandler) Restore(c *gin.Context) {
-	notImplemented(c)
+	if err := h.service.Restore(c.Request.Context(), c.Param("document_id")); err != nil {
+		abortWithError(c, err)
+		return
+	}
+	c.Status(http.StatusNoContent)
 }
 
 // notImplemented responde el envelope 501 de la fase de lógica pendiente.
