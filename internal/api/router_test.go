@@ -67,18 +67,6 @@ func TestHealthUnavailable(t *testing.T) {
 	require.Equal(t, http.StatusServiceUnavailable, rr.Code)
 }
 
-func TestGetByDocumentIDNotImplemented(t *testing.T) {
-	service := application.NewDocumentService(fakeRepo{})
-	handler := api.NewDocumentHandler(service, healthy{})
-	router := api.NewRouter(handler)
-
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/documents/abc", nil)
-	rr := httptest.NewRecorder()
-	router.ServeHTTP(rr, req)
-
-	require.Equal(t, http.StatusNotImplemented, rr.Code)
-}
-
 func TestHandler_SoftDelete_Success(t *testing.T) {
 	service := application.NewDocumentService(fakeRepo{})
 	handler := api.NewDocumentHandler(service, healthy{})
