@@ -2,6 +2,7 @@ package application_test
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -264,4 +265,144 @@ func TestGetByChecksum_SoftDeleted_ReturnsErrNotFound(t *testing.T) {
 	got, err := svc.GetByChecksum(context.Background(), "del-check")
 	require.Nil(t, got)
 	require.ErrorIs(t, err, domain.ErrNotFound)
+}
+
+// makeListDoc crea un documento de prueba para tests de List
+func makeListDoc(id, checksum, status string) domain.Document {
+	return domain.Document{
+		DocumentID:    id,
+		Checksum:      checksum,
+		Status:        domain.Status(status),
+		ExtractedText: "texto",
+		CreatedAt:     time.Now().UTC().Add(-time.Hour),
+	}
+}
+
+func TestList_DefaultPagination(t *testing.T) {
+	repo := newInMemoryRepo()
+	svc := application.NewDocumentService(repo)
+
+	for i := 1; i <= 25; i++ {
+		repo.Insert(context.Background(), makeListDoc(fmt.Sprintf("doc-%d", i), fmt.Sprintf("chk-%d", i), "PENDING"))
+	}
+
+	docs, total, err := svc.List(context.Background(), domain.ListFilter{}, 0, 0)
+	require.NoError(t, err)
+	require.Equal(t, int64(25), total)
+	require.Len(t, docs, 20) // default pageSize=20
+	// Verifica orden: created_at DESC (más reciente primero)
+	require.True(t, docs[0].CreatedAt.After(docs[1].CreatedAt))
+}
+
+func TestList_CustomPagination(t *testing.T) {
+	repo := newInMemoryRepo()
+	svc := application.NewDocumentService(repo)
+
+	for i := 1; i <= 25; i++ {
+		repo.Insert(context.Background(), makeListDoc(fmt.Sprintf("doc-%d", i), fmt.Sprintf("chk-%d", i), "PENDING"))
+	}
+
+	// page=2, pageSize=10
+	docs, total, err := svc.List(context.Background(), domain.ListFilter{}, 2, 10)
+	require.NoError(t, err)
+	require.Equal(t, int64(25), total)
+	require.Len(t, docs, 10)
+
+	// Clamp max pageSize=100
+	docs, _, err = svc.List(context.Background(), domain.ListFilter{}, 1, 150)
+	require.NoError(t, err)
+	require.Len(t, docs, 25) // clamp a 100, pero solo hay 25 docs
+}
+
+func TestList_FilterByStatus(t *testing.T) {
+	repo := newInMemoryRepo()
+	svc := application.NewDocumentService(repo)
+
+	repo.Insert(context.Background(), makeListDoc("doc-1", "chk-1", "PENDING"))
+	repo.Insert(context.Background(), makeListDoc("doc-2", "chk-2", "COMPLETED"))
+	repo.Insert(context.Background(), makeListDoc("doc-3", "chk-3", "PENDING"))
+
+	pending := domain.StatusPending
+	docs, total, err := svc.List(context.Background(), domain.ListFilter{Status: &pending}, 1, 20)
+	require.NoError(t, err)
+	require.Equal(t, int64(2), total)
+	require.Len(t, docs, 2)
+	for _, d := range docs {
+		require.Equal(t, domain.StatusPending, d.Status)
+	}
+}
+
+func TestList_FilterByFilename(t *testing.T) {
+	repo := newInMemoryRepo()
+	svc := application.NewDocumentService(repo)
+
+	repo.Insert(context.Background(), domain.Document{DocumentID: "doc-1", Checksum: "c1", ExtractedText: "x", Metadata: domain.Metadata{Filename: "informe.pdf"}})
+	repo.Insert(context.Background(), domain.Document{DocumentID: "doc-2", Checksum: "c2", ExtractedText: "x", Metadata: domain.Metadata{Filename: "factura.pdf"}})
+	repo.Insert(context.Background(), domain.Document{DocumentID: "doc-3", Checksum: "c3", ExtractedText: "x", Metadata: domain.Metadata{Filename: "INFORME_anual.pdf"}})
+
+	fn := "informe"
+	_, total, err := svc.List(context.Background(), domain.ListFilter{Filename: &fn}, 1, 20)
+	require.NoError(t, err)
+	require.Equal(t, int64(2), total) // "informe.pdf" + "INFORME_anual.pdf" (case-insensitive)
+}
+
+func TestList_FilterByCreatedRange(t *testing.T) {
+	repo := newInMemoryRepo()
+	svc := application.NewDocumentService(repo)
+
+	now := time.Now().UTC()
+	repo.Insert(context.Background(), domain.Document{DocumentID: "old", Checksum: "c1", ExtractedText: "x", CreatedAt: now.Add(-48 * time.Hour)})
+	repo.Insert(context.Background(), domain.Document{DocumentID: "mid", Checksum: "c2", ExtractedText: "x", CreatedAt: now.Add(-24 * time.Hour)})
+	repo.Insert(context.Background(), domain.Document{DocumentID: "new", Checksum: "c3", ExtractedText: "x", CreatedAt: now.Add(-1 * time.Hour)})
+
+	from := now.Add(-36 * time.Hour)
+	to := now.Add(-12 * time.Hour)
+	docs, total, err := svc.List(context.Background(), domain.ListFilter{CreatedFrom: &from, CreatedTo: &to}, 1, 20)
+	require.NoError(t, err)
+	require.Equal(t, int64(1), total) // solo "mid"
+	require.Equal(t, "mid", docs[0].DocumentID)
+}
+
+func TestList_IncludeDeleted(t *testing.T) {
+	repo := newInMemoryRepo()
+	svc := application.NewDocumentService(repo)
+
+	repo.Insert(context.Background(), makeListDoc("active", "c1", "PENDING"))
+	insertSoftDeleted(t, repo, makeListDoc("deleted", "c2", "PENDING"))
+
+	// Sin IncludeDeleted → excluye borrados
+	docs, _, err := svc.List(context.Background(), domain.ListFilter{}, 1, 20)
+	require.NoError(t, err)
+	require.Len(t, docs, 1)
+	require.Equal(t, "active", docs[0].DocumentID)
+
+	// Con IncludeDeleted=true → incluye borrados
+	docs, total, err := svc.List(context.Background(), domain.ListFilter{IncludeDeleted: true}, 1, 20)
+	require.NoError(t, err)
+	require.Equal(t, int64(2), total)
+	require.Len(t, docs, 2)
+}
+
+func TestList_ExcludesDeletedByDefault(t *testing.T) {
+	repo := newInMemoryRepo()
+	svc := application.NewDocumentService(repo)
+
+	insertSoftDeleted(t, repo, makeListDoc("deleted", "c1", "PENDING"))
+
+	_, total, err := svc.List(context.Background(), domain.ListFilter{}, 1, 20)
+	require.NoError(t, err)
+	require.Equal(t, int64(0), total)
+}
+
+func TestList_ReturnsTotal(t *testing.T) {
+	repo := newInMemoryRepo()
+	svc := application.NewDocumentService(repo)
+
+	for i := 1; i <= 42; i++ {
+		repo.Insert(context.Background(), makeListDoc(fmt.Sprintf("doc-%d", i), fmt.Sprintf("chk-%d", i), "PENDING"))
+	}
+
+	_, total, err := svc.List(context.Background(), domain.ListFilter{}, 2, 10)
+	require.NoError(t, err)
+	require.Equal(t, int64(42), total) // total correcto para paginación
 }
