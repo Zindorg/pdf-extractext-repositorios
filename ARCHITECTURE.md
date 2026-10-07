@@ -3,7 +3,7 @@
 > Documento rector del proyecto. Mantener actualizado junto con el código.
 > Última revisión: 2026-10-07. Alineado con `Especificaciones_v3.md` (hub & spoke, aislamiento de BD y zero-disk) + decisiones propias de este microservicio (dedup por checksum, ciclo de vida PENDING/COMPLETED).
 >
-> **Estado de implementación**: operativos — conexiones Mongo/Redis, índices, `CreatePending`/`CompleteWithSummary`/`Get*`/`List`, soft-delete/restore (service + API) y `/health`. Pendientes (fase de lógica) — loop de consumo del stream, canal de retries/DLQ, descargas y listado vía API (responden `501`). Las secciones siguientes describen el contrato objetivo; §10 marca el estado por endpoint.
+> **Estado de implementación**: operativos — conexiones Mongo/Redis, índices, `CreatePending`/`CompleteWithSummary`/`Get*`/`List`, soft-delete/restore (service + API), `/health` y el loop de consumo del stream (ACK/retry/DLQ). Pendientes (responden `501`): descargas. Las secciones siguientes describen el contrato objetivo; §10 marca el estado por endpoint.
 
 ## 1. Tipo de arquitectura
 
@@ -27,7 +27,7 @@ Patrón central de diseño: **Repository pattern** (puerto en dominio + adaptado
 | BD | **MongoDB 8** | BD del ecosistema original; dedup garantizado por índice único parcial |
 | Driver Mongo | `go.mongodb.org/mongo-driver/v2` | Driver oficial de MongoDB para Go |
 | Mensajería | **Redis Streams** (cliente `go-redis/v9`) | Ingesta asíncrona del texto original y del resumen por eventos; consumer groups y DLQ nativos |
-| Migraciones | — | No aplica: los índices los asegura la app al arrancar; el consumer group se crea en la fase de lógica |
+| Migraciones | — | No aplica: los índices los asegura la app al arrancar; el consumer group se crea también al arrancar (`ensureGroup`, mkstream) |
 | ID | `document_id` (UUID) de negocio + `_id` (ObjectId) interno | Clave pública vs clave de almacenamiento separadas |
 | Validación | `go-playground/validator` | Binding + reglas en DTOs y eventos |
 | Docs API | — | Sin swagger hoy (decisión pendiente); el contrato HTTP vive en §10 |
@@ -368,7 +368,7 @@ Live en `docs/adr/`:
 ## 13. Arquitectura de despliegue
 
 - `Dockerfile` multi-stage: `golang:1.26-alpine` (build) → `distroless` nonroot (binario ~10MB, sin shell).
-- **Un `docker-compose` por componente de ESTE microservicio**: `docker-compose.mongo.yml`, `docker-compose.redis.yml` y `docker-compose.app.yml`, encadenables con `make compose-up` (ordena mongo → redis → app). **Traefik NO vive en estos composes**: pertenece al ecosistema y solo expone al Orquestador. La app crea los índices al arrancar (el consumer group, en la fase de lógica); no hay servicio de migraciones.
+- **Un `docker-compose` por componente de ESTE microservicio**: `docker-compose.mongo.yml`, `docker-compose.redis.yml` y `docker-compose.app.yml`, encadenables con `make compose-up` (ordena mongo → redis → app). **Traefik NO vive en estos composes**: pertenece al ecosistema y solo expone al Orquestador. La app crea los índices y el consumer group al arrancar; no hay servicio de migraciones.
 - Redes: `mired` (**externa**, compartida con el ecosistema: aquí viven app y redis) y `db-net` con `internal: true` (creada por el compose de mongo; la referencian mongo app — la única con acceso a la BD).
 
 ```yaml

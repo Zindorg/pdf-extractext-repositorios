@@ -135,13 +135,22 @@ func serveHTTP(rootCtx context.Context, cfg *config.Config, inf *infra) error {
 	return shutdown(server)
 }
 
-// startConsumer registra el consumer de eventos del stream.
+// startConsumer arranca el consumer del stream en background. Un fallo al
+// crear el consumer group es fatal en el arranque; los fallos del loop los
+// gestiona el propio consumer (retry → DLQ).
 func startConsumer(ctx context.Context, cfg *config.Config, inf *infra, service *application.DocumentService) error {
-	consumer, err := redisadapter.NewStreamConsumer(ctx, inf.redis, cfg.StreamName, cfg.StreamGroup, service)
+	retry := redisadapter.NewRetryDLQ(cfg.RetryMax, cfg.RetryBackoff)
+	consumer, err := redisadapter.NewStreamConsumer(
+		inf.redis, cfg.StreamName, cfg.StreamGroup, cfg.DLQName, service, retry,
+	)
 	if err != nil {
 		return fmt.Errorf("redis consumer: %w", err)
 	}
-	_ = consumer // la fase de lógica conecta consumer ↔ service
+	go func() {
+		if err := consumer.Run(ctx); err != nil {
+			log.Printf("stream consumer: %v", err)
+		}
+	}()
 	return nil
 }
 

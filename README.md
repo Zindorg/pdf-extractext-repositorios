@@ -10,7 +10,7 @@ internal/config/     configuración por variables de entorno
 internal/domain/     entidades, interfaz de repositorio y errores de dominio
 internal/application/ casos de uso (DocumentService)
 internal/adapters/mongodb/ persistencia BSON + creación de índices
-internal/adapters/redis/  consumer de stream + DLQ (esqueleto, fase de lógica pendiente)
+internal/adapters/redis/  consumer de stream + DLQ (Redis Streams, consumer group)
 internal/adapters/health/ ping de Mongo y Redis para /health
 internal/api/        router Gin, handlers, DTOs y health check
 internal/testutil/   fixtures de documentos compartidos por los tests
@@ -69,10 +69,10 @@ Composes individuales: `make compose-mongo`, `make compose-redis`, `make compose
 
 Solo lectura/borrado; no hay `POST /documents` (la creación llega por stream).
 
-> **Estado actual**: solo `/health` está implementado; los endpoints de
-> negocio responden `501` (fase de lógica pendiente: dedup, soft-delete,
-> restore, listado en API y canal de retries). La tabla describe el
-> contrato final.
+> **Estado actual (2026-10-07)**: `/health`, lectura por `id`/`checksum`,
+> listado, soft-delete y restore implementados. Pendientes (responden `501`):
+> descargas `download/original` y `download/summary`. La tabla describe el
+> resto del contrato final.
 
 | Método | Ruta                                        | Respuesta                     |
 | ------ | ------------------------------------------- | ----------------------------- |

@@ -2,26 +2,15 @@ package redis
 
 import "time"
 
-// RetryDLQ maneja reintentos (XAUTOCLAIM con backoff) y el envío a la
-// dead-letter queue. En esta fase solo declara la superficie; la lógica de
-// Redis y el cálculo de retries se completa en la fase de lógica.
+// RetryDLQ regula los reintentos (XAUTOCLAIM con backoff constante) y decide
+// cuándo un fallo agotado va a la dead-letter queue.
 type RetryDLQ struct {
-	maxRetries    int
-	backoff       time.Duration
-	retryCountKey string
+	maxRetries int
+	backoff    time.Duration
 }
 
-const (
-	defaultRetryCountField = "retry_count"
-	dlqCauseField          = "dlq_cause"
-)
-
 func NewRetryDLQ(maxRetries int, backoff time.Duration) *RetryDLQ {
-	return &RetryDLQ{
-		maxRetries:    maxRetries,
-		backoff:       backoff,
-		retryCountKey: defaultRetryCountField,
-	}
+	return &RetryDLQ{maxRetries: maxRetries, backoff: backoff}
 }
 
 func (d *RetryDLQ) MaxRetries() int {

@@ -93,6 +93,10 @@ el consumer despacha por `event_type` si viene, si no por `event`. Valores
 aceptados: `original` y `summary_resolved`. Ambos campos deben coincidir si
 vienen juntos; si no, el mensaje se trata como inválido (retry → DLQ).
 
+Cada entrada del stream envuelve el payload en un único campo `event`:
+`XADD document-events * event <json>`, siendo `<json>` el objeto de §3.1/§3.2.
+Una entrada sin ese campo es inválida (retry → DLQ).
+
 ### 3.4 Rupturas respecto al esqueleto actual
 
 | # | Esqueleto actual (`events.go`) | Contrato cerrado | Tipo |
@@ -125,7 +129,7 @@ Ciclo A, `ProcessingTimeMS` deja de persistirse: se guardan
 | Dup legítimo `summary_resolved` (doc ya `COMPLETED`) | `XACK` + descarte (lo absorbe el service) |
 | `schema_version != 1`, JSON inválido o campos requeridos ausentes | Mensaje inválido ⇒ **retry → DLQ** (no éxito, no descarte) |
 | `summary_resolved` huérfano (`ErrNotFound`) | Retry con backoff (`RETRY_MAX` intentos) → DLQ |
-| Error transitorio (timeout, conexión) | Retry con backoff exponencial → DLQ |
+| Error transitorio (timeout, conexión) | Retry con backoff constante (`RETRY_BACKOFF`) → DLQ |
 | Otro error de dominio no catalogado | Retry max `RETRY_MAX`, luego DLQ |
 
 ### 5.1 DLQ payload
@@ -143,9 +147,11 @@ Copia del mensaje original + campos de causa:
 
 ### 5.2 Backoff
 
-`min(RETRY_BACKOFF * 2^attempt, 30s)` + jitter ±10%. El re-encolado para
-reintento se apoya en el mecanismo nativo del consumer group: el mensaje queda
-*pending* sin `XACK` y se reclama con `XAUTOCLAIM` tras el delay.
+Backoff **constante** = `RETRY_BACKOFF` (sin exponencial ni jitter: YAGNI). El
+re-encolado para reintento se apoya en el mecanismo nativo del consumer group:
+el mensaje queda *pending* sin `XACK` y se reclama con `XAUTOCLAIM` cuando lleva
+más de un `RETRY_BACKOFF` sin resolver (`MinIdle` de XAUTOCLAIM). Los intentos
+se llevan en un hash Redis `&lt;stream&gt;:retries` (HINCRBY por message ID).
 
 ## 6. Idempotencia
 
@@ -209,7 +215,7 @@ marcadores por la implementación real; no vuelve a declarar lógica muerta.
 5. `summary_resolved` huérfano ⇒ reintentos (max `RETRY_MAX`) ⇒ DLQ.
 6. `schema_version != 1`, campos ausentes o JSON inválido ⇒ retry → DLQ (nunca éxito).
 7. `event_type` ausente con `event` presente ⇒ despacho por `event` (tolerancia §3.3).
-8. Error transitorio ⇒ backoff exponencial + reintento.
+8. Error transitorio ⇒ backoff constante (`RETRY_BACKOFF`) + reintento (`XAUTOCLAIM`).
 9. `Run(ctx)` devuelve al cancelar `ctx`; no pierde mensajes sin ACK.
 10. `go test ./...`, `make lint` y `go vet -tags integration ./...` en verde.
 
