@@ -133,7 +133,24 @@ func (r *inMemoryRepo) SoftDelete(_ context.Context, documentID string) error {
 	return nil
 }
 
-func (r *inMemoryRepo) Restore(_ context.Context, _ string) error {
+func (r *inMemoryRepo) Restore(_ context.Context, documentID string) error {
+	doc, ok := r.byID[documentID]
+	if !ok {
+		return domain.ErrNotFound
+	}
+	if !doc.IsDeleted() {
+		return nil // idempotente: ya activo
+	}
+
+	// Conflicto: ¿otro documento ACTIVO usa este checksum?
+	if id, ok := r.checksumID[doc.Checksum]; ok && !r.byID[id].IsDeleted() {
+		return domain.ErrRestoreConflict
+	}
+
+	doc.DeletedAt = nil
+	doc.UpdatedAt = time.Now().UTC()
+	r.byID[documentID] = doc
+	r.checksumID[doc.Checksum] = documentID // reapropia el checksum
 	return nil
 }
 
