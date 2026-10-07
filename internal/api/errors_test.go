@@ -22,7 +22,7 @@ func TestHTTPStatusFor(t *testing.T) {
 		{name: "duplicate checksum", err: domain.ErrDuplicateChecksum, want: http.StatusConflict},
 		{name: "duplicate document id", err: domain.ErrDuplicateDocumentID, want: http.StatusConflict},
 		{name: "restore conflict", err: domain.ErrRestoreConflict, want: http.StatusConflict},
-		{name: "summary not ready", err: domain.ErrSummaryNotReady, want: http.StatusConflict},
+		{name: "summary not ready", err: domain.ErrSummaryPending, want: http.StatusConflict},
 		{name: "wrapped domain error", err: fmt.Errorf("capa: %w", domain.ErrNotFound), want: http.StatusNotFound},
 		{name: "root cause wins", err: fmt.Errorf("capa: %w", domain.ErrDuplicateChecksum), want: http.StatusConflict},
 		{name: "unknown error", err: errors.New("boom"), want: http.StatusInternalServerError},
@@ -44,7 +44,7 @@ func TestErrorCodeFor(t *testing.T) {
 		{name: "duplicate checksum", err: domain.ErrDuplicateChecksum, want: "DUPLICATE_CHECKSUM"},
 		{name: "duplicate document id", err: domain.ErrDuplicateDocumentID, want: "DUPLICATE_DOCUMENT_ID"},
 		{name: "restore conflict", err: domain.ErrRestoreConflict, want: "RESTORE_CONFLICT"},
-		{name: "summary not ready", err: domain.ErrSummaryNotReady, want: "SUMMARY_NOT_READY"},
+		{name: "summary not ready", err: domain.ErrSummaryPending, want: "summary_pending"},
 		{name: "wrapped domain error", err: fmt.Errorf("capa: %w", domain.ErrNotFound), want: "NOT_FOUND"},
 		{name: "unknown error", err: errors.New("boom"), want: "INTERNAL_ERROR"},
 	}

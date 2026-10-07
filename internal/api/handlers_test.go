@@ -30,7 +30,7 @@ func seedPending(t *testing.T, svc *application.DocumentService, id, checksum, t
 	t.Helper()
 	_, err := svc.CreatePending(context.Background(), domain.Document{
 		DocumentID: id, Checksum: checksum, ExtractedText: text,
-		Metadata:       domain.Metadata{Filename: "mi archivo.pdf", MimeType: "application/pdf"},
+		Metadata:         domain.Metadata{Filename: "mi archivo.pdf", MimeType: "application/pdf"},
 		ExtractionTimeMS: 342,
 	})
 	require.NoError(t, err)

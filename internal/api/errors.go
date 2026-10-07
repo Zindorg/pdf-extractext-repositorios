@@ -26,7 +26,9 @@ var errorMappings = []struct {
 	{domain.ErrDuplicateChecksum, http.StatusConflict, "DUPLICATE_CHECKSUM"},
 	{domain.ErrDuplicateDocumentID, http.StatusConflict, "DUPLICATE_DOCUMENT_ID"},
 	{domain.ErrRestoreConflict, http.StatusConflict, "RESTORE_CONFLICT"},
-	{domain.ErrSummaryNotReady, http.StatusConflict, "SUMMARY_NOT_READY"},
+	// summary_pending (minúsculas) es el code literal del Orquestador (delta 12):
+	// esta fila no sigue la convención UPPER del resto a propósito.
+	{domain.ErrSummaryPending, http.StatusConflict, "summary_pending"},
 }
 
 func httpStatusFor(err error) int {
