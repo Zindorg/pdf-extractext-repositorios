@@ -153,6 +153,9 @@ func buildMongoFilter(f domain.ListFilter) bson.M {
 	if !f.IncludeDeleted {
 		m["deleted_at"] = bson.M{"$exists": false}
 	}
+	if f.Status != nil {
+		m["status"] = *f.Status
+	}
 	return m
 }
 
