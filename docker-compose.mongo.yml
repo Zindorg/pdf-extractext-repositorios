@@ -8,12 +8,10 @@ services:
     volumes:
       - mongo_data:/data/db
     networks:
-      mired:
+      db-net:
         aliases: [mongo]
     ports:
       - "27017:27017"
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
 
   mongo-init:
     image: mongo:8

@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -10,6 +11,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/marco/pdf-extractext-repositorios/internal/adapters/health"
 	"github.com/marco/pdf-extractext-repositorios/internal/adapters/mongodb"
 	redisadapter "github.com/marco/pdf-extractext-repositorios/internal/adapters/redis"
 	"github.com/marco/pdf-extractext-repositorios/internal/api"
@@ -21,21 +23,11 @@ import (
 	"go.mongodb.org/mongo-driver/v2/mongo/readpref"
 )
 
-// depsHealth agrupa los ping de dependencias para /health.
-type depsHealth struct {
-	mongo *mongo.Client
-	redis *redis.Client
-}
-
-func (h *depsHealth) Ping() error {
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-
-	if err := h.mongo.Ping(ctx, readpref.Primary()); err != nil {
-		return err
-	}
-	return h.redis.Ping(ctx).Err()
-}
+const (
+	startupTimeout    = 10 * time.Second // ping e índices al arrancar
+	readHeaderTimeout = 5 * time.Second  // hardening: límite de lectura de headers
+	shutdownTimeout   = 10 * time.Second // graceful shutdown
+)
 
 func main() {
 	if err := run(); err != nil {
@@ -52,69 +44,87 @@ func run() error {
 	rootCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	// --- Mongo ---------------------------------------------------------
-	mongoClient, err := mongo.Connect(options.Client().ApplyURI(cfg.MongoDBURI))
+	inf, err := startInfra(rootCtx, cfg)
 	if err != nil {
 		return err
 	}
-	defer func() { _ = mongoClient.Disconnect(context.Background()) }()
+	defer inf.close()
 
-	// verificación temprana: si Mongo no responde, no arrancamos
-	{
-		ctx, cancel := context.WithTimeout(rootCtx, 10*time.Second)
-		defer cancel()
-		if err := mongoClient.Ping(ctx, readpref.Primary()); err != nil {
-			return err
-		}
+	return serveHTTP(rootCtx, cfg, inf)
+}
+
+// infra agrupa los clientes de infraestructura; close() libera ambos.
+type infra struct {
+	mongo *mongo.Client
+	redis *redis.Client
+	repo  *mongodb.MongoDocumentRepository
+}
+
+func (i *infra) close() {
+	_ = i.mongo.Disconnect(context.Background())
+	_ = i.redis.Close()
+}
+
+// startInfra conecta Mongo (ping + índices) y Redis (ping).
+func startInfra(ctx context.Context, cfg *config.Config) (*infra, error) {
+	mongoClient, repo, err := startMongo(ctx, cfg.MongoDBURI, cfg.MongoDBDatabase)
+	if err != nil {
+		return nil, err
 	}
+	redisClient, err := startRedis(ctx, cfg.RedisAddr)
+	if err != nil {
+		_ = mongoClient.Disconnect(context.Background())
+		return nil, err
+	}
+	return &infra{mongo: mongoClient, redis: redisClient, repo: repo}, nil
+}
 
-	db := mongoClient.Database(cfg.MongoDBDatabase)
-	repo := mongodb.NewMongoDocumentRepository(db)
-
-	ctx, cancel := context.WithTimeout(rootCtx, 10*time.Second)
+// startMongo conecta, verifica tempranamente (si Mongo no responde, no
+// arrancamos) y prepara los índices. El dueño del cliente es el caller.
+func startMongo(ctx context.Context, uri, dbName string) (*mongo.Client, *mongodb.MongoDocumentRepository, error) {
+	client, err := mongo.Connect(options.Client().ApplyURI(uri))
+	if err != nil {
+		return nil, nil, fmt.Errorf("mongo connect: %w", err)
+	}
+	pingCtx, cancel := context.WithTimeout(ctx, startupTimeout)
 	defer cancel()
-	if err := repo.EnsureIndexes(ctx); err != nil {
+	if err := client.Ping(pingCtx, readpref.Primary()); err != nil {
+		_ = client.Disconnect(context.Background())
+		return nil, nil, fmt.Errorf("mongo ping: %w", err)
+	}
+	repo := mongodb.NewMongoDocumentRepository(client.Database(dbName))
+	idxCtx, idxCancel := context.WithTimeout(ctx, startupTimeout)
+	defer idxCancel()
+	if err := repo.EnsureIndexes(idxCtx); err != nil {
+		_ = client.Disconnect(context.Background())
+		return nil, nil, fmt.Errorf("mongo indexes: %w", err)
+	}
+	return client, repo, nil
+}
+
+// startRedis conecta el cliente y verifica que el servidor responda.
+func startRedis(ctx context.Context, addr string) (*redis.Client, error) {
+	client := redis.NewClient(&redis.Options{Addr: addr})
+	pingCtx, cancel := context.WithTimeout(ctx, startupTimeout)
+	defer cancel()
+	if err := client.Ping(pingCtx).Err(); err != nil {
+		_ = client.Close()
+		return nil, fmt.Errorf("redis ping: %w", err)
+	}
+	return client, nil
+}
+
+// serveHTTP monta la API, arranca el servidor y bloquea hasta la señal de
+// apagado o un error fatal del listener.
+func serveHTTP(rootCtx context.Context, cfg *config.Config, inf *infra) error {
+	service := application.NewDocumentService(inf.repo)
+	if err := startConsumer(rootCtx, cfg, inf, service); err != nil {
 		return err
 	}
 
-	// --- Redis ---------------------------------------------------------
-	redisClient := redis.NewClient(&redis.Options{Addr: cfg.RedisAddr})
-	defer func() { _ = redisClient.Close() }()
-
-	{
-		ctx, cancel := context.WithTimeout(rootCtx, 10*time.Second)
-		defer cancel()
-		if err := redisClient.Ping(ctx).Err(); err != nil {
-			return err
-		}
-	}
-
-	// --- Wiring de la API ----------------------------------------------
-	service := application.NewDocumentService(repo)
-
-	consumer, err := redisadapter.NewStreamConsumer(rootCtx, redisClient, cfg.StreamName, cfg.StreamGroup, service)
-	if err != nil {
-		return err
-	}
-	_ = consumer // la fase de lógica conecta consumer ↔ service
-
-	handler := api.NewDocumentHandler(service, &depsHealth{mongo: mongoClient, redis: redisClient})
-	router := api.NewRouter(handler)
-
-	server := &http.Server{
-		Addr:              ":" + cfg.HTTPPort,
-		Handler:           router,
-		ReadHeaderTimeout: 5 * time.Second,
-	}
-
-	// --- Serve + graceful shutdown --------------------------------------
-	errCh := make(chan error, 1)
-	go func() {
-		log.Printf("servidor HTTP escuchando en :%s", cfg.HTTPPort)
-		if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			errCh <- err
-		}
-	}()
+	server := newServer(cfg, service, inf)
+	log.Printf("servidor HTTP escuchando en :%s", cfg.HTTPPort)
+	errCh := listenAndServe(server)
 
 	select {
 	case err := <-errCh:
@@ -122,8 +132,44 @@ func run() error {
 	case <-rootCtx.Done():
 		log.Println("apagando…")
 	}
+	return shutdown(server)
+}
 
-	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer shutdownCancel()
-	return server.Shutdown(shutdownCtx)
+// startConsumer registra el consumer de eventos del stream.
+func startConsumer(ctx context.Context, cfg *config.Config, inf *infra, service *application.DocumentService) error {
+	consumer, err := redisadapter.NewStreamConsumer(ctx, inf.redis, cfg.StreamName, cfg.StreamGroup, service)
+	if err != nil {
+		return fmt.Errorf("redis consumer: %w", err)
+	}
+	_ = consumer // la fase de lógica conecta consumer ↔ service
+	return nil
+}
+
+// newServer construye el servidor HTTP: service → handler → router.
+func newServer(cfg *config.Config, service *application.DocumentService, inf *infra) *http.Server {
+	handler := api.NewDocumentHandler(service, health.NewPinger(inf.mongo, inf.redis))
+	return &http.Server{
+		Addr:              ":" + cfg.HTTPPort,
+		Handler:           api.NewRouter(handler),
+		ReadHeaderTimeout: readHeaderTimeout,
+	}
+}
+
+// listenAndServe sirve en background y propaga errores fatales del listener.
+func listenAndServe(server *http.Server) <-chan error {
+	errCh := make(chan error, 1)
+	go func() {
+		if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			errCh <- err
+		}
+	}()
+	return errCh
+}
+
+// shutdown apaga el servidor con timeout (context.Background: rootCtx ya
+// está cancelado en este punto).
+func shutdown(server *http.Server) error {
+	ctx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
+	defer cancel()
+	return server.Shutdown(ctx)
 }

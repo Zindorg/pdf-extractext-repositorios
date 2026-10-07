@@ -1,0 +1,16 @@
+# VCS y tooling del repo
+.git
+.gitignore
+.agents
+
+# Entorno y orquestación (el build solo necesita fuentes)
+.env
+.env.example
+docker-compose.*.yml
+Makefile
+
+# Documentación y meta (docs/ sí va: el Dockerfile la copia al runtime)
+README.md
+ARCHITECTURE.md
+LICENSE
+AGENTS.md

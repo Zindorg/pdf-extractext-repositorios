@@ -1,4 +1,7 @@
 @startuml
+' Contrato objetivo del flujo (estado futuro del código).
+' Estado actual (2026-10-07): este endpoint responde 501 — la lógica
+' está pendiente; ver «Estado actual» en README.md y §10 en ARCHITECTURE.md.
 !theme plain
 autonumber
 

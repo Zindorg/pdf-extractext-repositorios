@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/marco/pdf-extractext-repositorios/internal/domain"
+	"github.com/marco/pdf-extractext-repositorios/internal/testutil"
 	"github.com/stretchr/testify/require"
 	"go.mongodb.org/mongo-driver/v2/mongo"
 	"go.mongodb.org/mongo-driver/v2/mongo/options"
@@ -70,20 +71,10 @@ func insertDoc(t *testing.T, repo *MongoDocumentRepository, doc domain.Document)
 	require.NoError(t, repo.Insert(context.Background(), doc))
 }
 
+// integrationDoc envuelve el fixture compartido (testutil.NewDoc) con las
+// convenciones de este test: checksum derivado del id.
 func integrationDoc(id, filename, status string, created time.Time) domain.Document {
-	return domain.Document{
-		DocumentID:    id,
-		Checksum:      "chk-" + id,
-		Status:        domain.Status(status),
-		ExtractedText: "contenido",
-		Metadata: domain.Metadata{
-			Filename:  filename,
-			MimeType:  "application/pdf",
-			SizeBytes: 100,
-			PageCount: 1,
-		},
-		CreatedAt: created,
-	}
+	return testutil.NewDoc(id, filename, "chk-"+id, domain.Status(status), created)
 }
 
 func TestList_Integration_DefaultPaginationExcludesDeleted(t *testing.T) {
@@ -95,8 +86,7 @@ func TestList_Integration_DefaultPaginationExcludesDeleted(t *testing.T) {
 	insertDoc(t, repo, integrationDoc("doc-3", "c.pdf", "PENDING", now.Add(-1*time.Hour)))
 
 	deletedAt := now.Add(-30 * time.Minute)
-	del := integrationDoc("doc-del", "d.pdf", "PENDING", now.Add(-30*time.Minute))
-	del.DeletedAt = &deletedAt
+	del := testutil.WithDeleted(integrationDoc("doc-del", "d.pdf", "PENDING", now.Add(-30*time.Minute)), deletedAt)
 	insertDoc(t, repo, del)
 
 	docs, total, err := repo.List(context.Background(), domain.ListFilter{}, 1, 20)
@@ -161,8 +151,7 @@ func TestList_Integration_IncludeDeleted(t *testing.T) {
 	now := time.Now().UTC()
 	insertDoc(t, repo, integrationDoc("active", "a.pdf", "PENDING", now.Add(-2*time.Hour)))
 	deletedAt := now.Add(-time.Hour)
-	del := integrationDoc("deleted", "b.pdf", "PENDING", now.Add(-1*time.Hour))
-	del.DeletedAt = &deletedAt
+	del := testutil.WithDeleted(integrationDoc("deleted", "b.pdf", "PENDING", now.Add(-1*time.Hour)), deletedAt)
 	insertDoc(t, repo, del)
 
 	docs, _, err := repo.List(context.Background(), domain.ListFilter{}, 1, 20)

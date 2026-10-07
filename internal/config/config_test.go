@@ -11,12 +11,15 @@ import (
 func TestLoadWithDefaults(t *testing.T) {
 	t.Setenv("HTTP_PORT", "")
 	t.Setenv("MONGODB_URI", "")
+	t.Setenv("MONGODB_DATABASE", "")
 	t.Setenv("REDIS_ADDR", "")
 	t.Setenv("STREAM_NAME", "")
 	t.Setenv("STREAM_GROUP", "")
 	t.Setenv("DLQ_NAME", "")
 	t.Setenv("RETRY_MAX", "")
 	t.Setenv("RETRY_BACKOFF", "")
+	t.Setenv("MAX_TEXT_BYTES", "")
+	t.Setenv("LOG_LEVEL", "")
 
 	cfg, err := config.Load()
 	require.NoError(t, err)

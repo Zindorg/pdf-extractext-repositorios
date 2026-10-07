@@ -11,7 +11,9 @@ internal/domain/     entidades, interfaz de repositorio y errores de dominio
 internal/application/ casos de uso (DocumentService)
 internal/adapters/mongodb/ persistencia BSON + creación de índices
 internal/adapters/redis/  consumer de stream + DLQ (esqueleto, fase de lógica pendiente)
+internal/adapters/health/ ping de Mongo y Redis para /health
 internal/api/        router Gin, handlers, DTOs y health check
+internal/testutil/   fixtures de documentos compartidos por los tests
 ```
 
 ## Requisitos
@@ -19,6 +21,7 @@ internal/api/        router Gin, handlers, DTOs y health check
 - Go 1.26+
 - Docker (para Mongo/Redis) o instancias locales
 - Red Docker `mired` ya creada: `docker network create mired`
+  (la red `db-net` la crea `docker-compose.mongo.yml` al levantar)
 
 ## Correr localmente
 
@@ -66,6 +69,11 @@ Composes individuales: `make compose-mongo`, `make compose-redis`, `make compose
 
 Solo lectura/borrado; no hay `POST /documents` (la creación llega por stream).
 
+> **Estado actual**: solo `/health` está implementado; los endpoints de
+> negocio responden `501` (fase de lógica pendiente: dedup, soft-delete,
+> restore, listado en API y canal de retries). La tabla describe el
+> contrato final.
+
 | Método | Ruta                                        | Respuesta                     |
 | ------ | ------------------------------------------- | ----------------------------- |
 | `GET`  | `/api/v1/health`                            | `200 {"status":"ok"}` / `503` |
@@ -79,4 +87,8 @@ Solo lectura/borrado; no hay `POST /documents` (la creación llega por stream).
 
 Errores en envelope `{"code","message","details"}`; paginación por defecto `20`, máx `100`.
 
-> Estado actual: esqueleto con wiring real (Mongo/Redis/indexes). Los endpoints de negocio responden `501`; la lógica (dedup, soft-delete, restore, listado, canal de retries) se implementa en la fase siguiente.
+## Contribuciones
+
+Toda modificación de código (humana o asistida por IA) debe cumplir los
+principios, reglas y proceso de [AGENTS.md](AGENTS.md) — obligatorio antes
+de dar por terminado un cambio.

@@ -29,6 +29,11 @@ type Document struct {
 	DeletedAt        *time.Time `json:"deleted_at"` // soft-delete
 }
 
+// Now devuelve la hora canónica del servicio (UTC). Todas las marcas de
+// tiempo que muta el servicio (created_at, updated_at) salen de este reloj:
+// service, adaptadores y fakes de test lo comparten.
+func Now() time.Time { return time.Now().UTC() }
+
 func (d Document) IsCompleted() bool {
 	return d.Status == StatusCompleted
 }

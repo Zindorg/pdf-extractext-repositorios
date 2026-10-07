@@ -2,6 +2,7 @@ package api
 
 import (
 	"errors"
+	"net/http"
 
 	"github.com/gin-gonic/gin"
 	"github.com/marco/pdf-extractext-repositorios/internal/domain"
@@ -14,37 +15,36 @@ type ErrorEnvelope struct {
 	Details map[string]any `json:"details,omitempty"`
 }
 
-// ErrorCode del dominio → HTTP.
+// errorMappings es la fuente única de verdad: error de dominio → (HTTP status, code).
+// Añadir un error de dominio al contrato = añadir una fila; el orden define la precedencia.
+var errorMappings = []struct {
+	is     error
+	status int
+	code   string
+}{
+	{domain.ErrNotFound, http.StatusNotFound, "NOT_FOUND"},
+	{domain.ErrDuplicateChecksum, http.StatusConflict, "DUPLICATE_CHECKSUM"},
+	{domain.ErrDuplicateDocumentID, http.StatusConflict, "DUPLICATE_DOCUMENT_ID"},
+	{domain.ErrRestoreConflict, http.StatusConflict, "RESTORE_CONFLICT"},
+	{domain.ErrSummaryNotReady, http.StatusConflict, "SUMMARY_NOT_READY"},
+}
+
 func httpStatusFor(err error) int {
-	switch {
-	case errors.Is(err, domain.ErrNotFound):
-		return 404
-	case errors.Is(err, domain.ErrDuplicateChecksum),
-		errors.Is(err, domain.ErrDuplicateDocumentID),
-		errors.Is(err, domain.ErrRestoreConflict):
-		return 409
-	case errors.Is(err, domain.ErrSummaryNotReady):
-		return 409
-	default:
-		return 500
+	for _, m := range errorMappings {
+		if errors.Is(err, m.is) {
+			return m.status
+		}
 	}
+	return http.StatusInternalServerError
 }
 
 func errorCodeFor(err error) string {
-	switch {
-	case errors.Is(err, domain.ErrNotFound):
-		return "NOT_FOUND"
-	case errors.Is(err, domain.ErrDuplicateChecksum):
-		return "DUPLICATE_CHECKSUM"
-	case errors.Is(err, domain.ErrDuplicateDocumentID):
-		return "DUPLICATE_DOCUMENT_ID"
-	case errors.Is(err, domain.ErrRestoreConflict):
-		return "RESTORE_CONFLICT"
-	case errors.Is(err, domain.ErrSummaryNotReady):
-		return "SUMMARY_NOT_READY"
-	default:
-		return "INTERNAL_ERROR"
+	for _, m := range errorMappings {
+		if errors.Is(err, m.is) {
+			return m.code
+		}
 	}
+	return "INTERNAL_ERROR"
 }
 
 // abortWithError escribe el envelope y corta el request.

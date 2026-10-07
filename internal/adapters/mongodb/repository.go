@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"strings"
-	"time"
 
 	"github.com/marco/pdf-extractext-repositorios/internal/domain"
 	"go.mongodb.org/mongo-driver/v2/bson"
@@ -15,8 +14,8 @@ import (
 const collectionName = "documents"
 
 // MongoDocumentRepository implementa el puerto del dominio sobre MongoDB.
-// En esta fase es un esqueleto: la conexión y el mapper están listos; la
-// lógica de cada operación se completa en las fases de lógica.
+// Insert, UpdateStatus, Find* y List están implementados; SoftDelete y
+// Restore devuelven errNotImplemented hasta la fase de lógica.
 type MongoDocumentRepository struct {
 	collection *mongo.Collection
 }
@@ -28,10 +27,6 @@ func NewMongoDocumentRepository(db *mongo.Database) *MongoDocumentRepository {
 }
 
 func (r *MongoDocumentRepository) Insert(ctx context.Context, doc domain.Document) error {
-	if r.collection == nil {
-		return errNotConnected
-	}
-
 	persisted := toPersisted(doc)
 	persisted.ID = bson.NewObjectID() // el driver no genera _id si el campo viene en cero
 	if _, err := r.collection.InsertOne(ctx, persisted); err != nil {
@@ -48,9 +43,9 @@ func mapInsertError(err error) error {
 		return err
 	}
 	switch {
-	case strings.Contains(err.Error(), "uq_document_id"):
+	case strings.Contains(err.Error(), idxDocumentID):
 		return domain.ErrDuplicateDocumentID
-	case strings.Contains(err.Error(), "uq_checksum_active"):
+	case strings.Contains(err.Error(), idxChecksumAlive):
 		return domain.ErrDuplicateChecksum
 	default:
 		return errDuplicate
@@ -58,45 +53,31 @@ func mapInsertError(err error) error {
 }
 
 func (r *MongoDocumentRepository) UpdateStatus(ctx context.Context, documentID string, status domain.Status, summary *string) (*domain.Document, error) {
-	if r.collection == nil {
-		return nil, errNotConnected
-	}
-
 	filter := bson.M{"document_id": documentID}
 	update := bson.M{"$set": bson.M{
 		"status":     string(status),
 		"summary":    summary,
-		"updated_at": time.Now().UTC(),
+		"updated_at": domain.Now(),
 	}}
 
 	res := r.collection.FindOneAndUpdate(ctx, filter, update,
 		options.FindOneAndUpdate().SetReturnDocument(options.After))
-	if res.Err() != nil {
-		if errors.Is(res.Err(), mongo.ErrNoDocuments) {
-			return nil, domain.ErrNotFound
-		}
-		return nil, res.Err()
-	}
-
-	var persisted persistedDocument
-	if err := res.Decode(&persisted); err != nil {
-		return nil, err
-	}
-	doc := toDomain(persisted)
-	return &doc, nil
+	return decodeSingle(res)
 }
 
-// findOne ejecuta FindOne con filtro genérico, mapea error y devuelve *domain.Document
+// findOne ejecuta FindOne con filtro genérico y devuelve *domain.Document.
 func (r *MongoDocumentRepository) findOne(ctx context.Context, filter any) (*domain.Document, error) {
-	if r.collection == nil {
-		return nil, errNotConnected
-	}
-	res := r.collection.FindOne(ctx, filter)
-	if res.Err() != nil {
-		if errors.Is(res.Err(), mongo.ErrNoDocuments) {
+	return decodeSingle(r.collection.FindOne(ctx, filter))
+}
+
+// decodeSingle traduce ErrNoDocuments a ErrNotFound y decodifica el
+// resultado (compartido por FindOne y FindOneAndUpdate).
+func decodeSingle(res *mongo.SingleResult) (*domain.Document, error) {
+	if err := res.Err(); err != nil {
+		if errors.Is(err, mongo.ErrNoDocuments) {
 			return nil, domain.ErrNotFound
 		}
-		return nil, res.Err()
+		return nil, err
 	}
 	var persisted persistedDocument
 	if err := res.Decode(&persisted); err != nil {
@@ -115,37 +96,52 @@ func (r *MongoDocumentRepository) FindByChecksum(ctx context.Context, checksum s
 }
 
 func (r *MongoDocumentRepository) List(ctx context.Context, filter domain.ListFilter, page, pageSize int) ([]domain.Document, int64, error) {
-	if r.collection == nil {
-		return nil, 0, errNotConnected
-	}
+	return r.findPage(ctx, buildMongoFilter(filter), page, pageSize)
+}
 
-	mongoFilter := buildMongoFilter(filter)
-
-	total, err := r.collection.CountDocuments(ctx, mongoFilter)
+// findPage cuenta y pagina los documentos que cumplen filter (created_at DESC).
+func (r *MongoDocumentRepository) findPage(ctx context.Context, filter bson.M, page, pageSize int) ([]domain.Document, int64, error) {
+	total, err := r.collection.CountDocuments(ctx, filter)
 	if err != nil {
 		return nil, 0, err
 	}
 
-	opts := options.Find().
-		SetSkip(int64((page - 1) * pageSize)).
-		SetLimit(int64(pageSize)).
-		SetSort(bson.D{{Key: "created_at", Value: -1}})
-
-	cursor, err := r.collection.Find(ctx, mongoFilter, opts)
+	cursor, err := r.collection.Find(ctx, filter, pageOptions(page, pageSize))
 	if err != nil {
 		return nil, 0, err
 	}
 	defer cursor.Close(ctx)
 
+	docs, err := decodeCursor(ctx, cursor)
+	if err != nil {
+		return nil, 0, err
+	}
+	return docs, total, nil
+}
+
+// pageOptions arma skip/limit/sort del listado.
+func pageOptions(page, pageSize int) *options.FindOptionsBuilder {
+	return options.Find().
+		SetSkip(int64((page - 1) * pageSize)).
+		SetLimit(int64(pageSize)).
+		SetSort(bson.D{{Key: "created_at", Value: -1}})
+}
+
+// decodeCursor recorre el cursor y traduce a documentos de dominio;
+// cualquier error del cursor aborta el listado.
+func decodeCursor(ctx context.Context, cursor *mongo.Cursor) ([]domain.Document, error) {
 	var docs []domain.Document
 	for cursor.Next(ctx) {
 		var p persistedDocument
 		if err := cursor.Decode(&p); err != nil {
-			return nil, 0, err
+			return nil, err
 		}
 		docs = append(docs, toDomain(p))
 	}
-	return docs, total, nil
+	if err := cursor.Err(); err != nil {
+		return nil, err
+	}
+	return docs, nil
 }
 
 func buildMongoFilter(f domain.ListFilter) bson.M {
@@ -162,17 +158,23 @@ func buildMongoFilter(f domain.ListFilter) bson.M {
 			"$options": "i",
 		}
 	}
-	if f.CreatedFrom != nil || f.CreatedTo != nil {
-		rangeFilter := bson.M{}
-		if f.CreatedFrom != nil {
-			rangeFilter["$gte"] = *f.CreatedFrom
-		}
-		if f.CreatedTo != nil {
-			rangeFilter["$lte"] = *f.CreatedTo
-		}
-		m["created_at"] = rangeFilter
-	}
+	applyCreatedRange(m, f)
 	return m
+}
+
+// applyCreatedRange añade el rango $gte/$lte de created_at si el request lo trae.
+func applyCreatedRange(m bson.M, f domain.ListFilter) {
+	if f.CreatedFrom == nil && f.CreatedTo == nil {
+		return
+	}
+	rangeFilter := bson.M{}
+	if f.CreatedFrom != nil {
+		rangeFilter["$gte"] = *f.CreatedFrom
+	}
+	if f.CreatedTo != nil {
+		rangeFilter["$lte"] = *f.CreatedTo
+	}
+	m["created_at"] = rangeFilter
 }
 
 func (r *MongoDocumentRepository) SoftDelete(ctx context.Context, documentID string) error {
@@ -185,6 +187,5 @@ func (r *MongoDocumentRepository) Restore(ctx context.Context, documentID string
 
 var (
 	errNotImplemented = errors.New("not implemented yet")
-	errNotConnected   = errors.New("mongodb not connected")
 	errDuplicate      = errors.New("duplicate key")
 )

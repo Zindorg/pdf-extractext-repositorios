@@ -1,4 +1,6 @@
 @startuml
+' Contrato objetivo de las clases (estado futuro del código).
+' Estado actual (2026-10-07): ver «Estado de implementación» en ARCHITECTURE.md.
 !theme plain
 hide circle
 

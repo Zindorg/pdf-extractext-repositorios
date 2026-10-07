@@ -36,21 +36,15 @@ type Config struct {
 }
 
 func Load() (*Config, error) {
-	retryMax, err := envInt("RETRY_MAX", defaultRetryMax)
-	if err != nil {
-		return nil, fmt.Errorf("RETRY_MAX: %w", err)
+	cfg := stringConfig()
+	if err := loadNumbers(cfg); err != nil {
+		return nil, err
 	}
+	return cfg, nil
+}
 
-	retryBackoff, err := envDuration("RETRY_BACKOFF", defaultRetryBackoff)
-	if err != nil {
-		return nil, fmt.Errorf("RETRY_BACKOFF: %w", err)
-	}
-
-	maxTextBytes, err := envInt64("MAX_TEXT_BYTES", defaultMaxTextBytes)
-	if err != nil {
-		return nil, fmt.Errorf("MAX_TEXT_BYTES: %w", err)
-	}
-
+// stringConfig monta el bloque de variables de texto con sus defaults.
+func stringConfig() *Config {
 	return &Config{
 		HTTPPort:        env("HTTP_PORT", defaultHTTPPort),
 		MongoDBURI:      env("MONGODB_URI", defaultMongoDBURI),
@@ -59,11 +53,24 @@ func Load() (*Config, error) {
 		StreamName:      env("STREAM_NAME", defaultStreamName),
 		StreamGroup:     env("STREAM_GROUP", defaultStreamGroup),
 		DLQName:         env("DLQ_NAME", defaultDLQName),
-		RetryMax:        retryMax,
-		RetryBackoff:    retryBackoff,
-		MaxTextBytes:    maxTextBytes,
 		LogLevel:        env("LOG_LEVEL", defaultLogLevel),
-	}, nil
+	}
+}
+
+// loadNumbers parsea las env vars numéricas y de duración.
+func loadNumbers(cfg *Config) error {
+	var err error
+	if cfg.RetryMax, err = envParse("RETRY_MAX", defaultRetryMax, "integer", strconv.Atoi); err != nil {
+		return fmt.Errorf("RETRY_MAX: %w", err)
+	}
+	if cfg.RetryBackoff, err = envParse("RETRY_BACKOFF", defaultRetryBackoff, "duration", time.ParseDuration); err != nil {
+		return fmt.Errorf("RETRY_BACKOFF: %w", err)
+	}
+	if cfg.MaxTextBytes, err = envParse("MAX_TEXT_BYTES", defaultMaxTextBytes, "integer",
+		func(s string) (int64, error) { return strconv.ParseInt(s, 10, 64) }); err != nil {
+		return fmt.Errorf("MAX_TEXT_BYTES: %w", err)
+	}
+	return nil
 }
 
 func env(key, fallback string) string {
@@ -73,38 +80,17 @@ func env(key, fallback string) string {
 	return fallback
 }
 
-func envInt(key string, fallback int) (int, error) {
+// envParse lee una env var y la convierte con parse; ausente o vacía → fallback.
+// kind etiqueta el tipo para el mensaje de error ("integer", "duration", ...).
+func envParse[T any](key string, fallback T, kind string, parse func(string) (T, error)) (T, error) {
 	v, ok := os.LookupEnv(key)
 	if !ok || v == "" {
 		return fallback, nil
 	}
-	n, err := strconv.Atoi(v)
+	out, err := parse(v)
 	if err != nil {
-		return 0, fmt.Errorf("invalid integer %q: %w", v, err)
+		var zero T
+		return zero, fmt.Errorf("invalid %s %q: %w", kind, v, err)
 	}
-	return n, nil
-}
-
-func envInt64(key string, fallback int64) (int64, error) {
-	v, ok := os.LookupEnv(key)
-	if !ok || v == "" {
-		return fallback, nil
-	}
-	n, err := strconv.ParseInt(v, 10, 64)
-	if err != nil {
-		return 0, fmt.Errorf("invalid integer %q: %w", v, err)
-	}
-	return n, nil
-}
-
-func envDuration(key string, fallback time.Duration) (time.Duration, error) {
-	v, ok := os.LookupEnv(key)
-	if !ok || v == "" {
-		return fallback, nil
-	}
-	d, err := time.ParseDuration(v)
-	if err != nil {
-		return 0, fmt.Errorf("invalid duration %q: %w", v, err)
-	}
-	return d, nil
+	return out, nil
 }

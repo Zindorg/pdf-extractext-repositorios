@@ -1,4 +1,7 @@
 @startuml
+' Contrato objetivo del flujo (estado futuro del código).
+' Estado actual (2026-10-07): CreatePending está implementado en el service,
+' pero el loop de consumo del stream (XREADGROUP) sigue pendiente.
 !theme plain
 autonumber
 

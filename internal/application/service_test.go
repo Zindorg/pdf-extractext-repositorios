@@ -10,6 +10,7 @@ import (
 
 	"github.com/marco/pdf-extractext-repositorios/internal/application"
 	"github.com/marco/pdf-extractext-repositorios/internal/domain"
+	"github.com/marco/pdf-extractext-repositorios/internal/testutil"
 	"github.com/stretchr/testify/require"
 )
 
@@ -49,7 +50,7 @@ func (r *inMemoryRepo) UpdateStatus(_ context.Context, documentID string, status
 	}
 	doc.Status = status
 	doc.Summary = summary
-	doc.UpdatedAt = time.Now().UTC()
+	doc.UpdatedAt = domain.Now()
 	r.byID[documentID] = doc
 	return &doc, nil
 }
@@ -70,19 +71,8 @@ func (r *inMemoryRepo) FindByChecksum(ctx context.Context, checksum string) (*do
 	return r.FindByDocumentID(ctx, id)
 }
 
+// List asume page/pageSize ya normalizados por el servicio (ver puerto).
 func (r *inMemoryRepo) List(_ context.Context, filter domain.ListFilter, page, pageSize int) ([]domain.Document, int64, error) {
-	// Default pagination
-	if page <= 0 {
-		page = 1
-	}
-	if pageSize <= 0 {
-		pageSize = 20
-	}
-	if pageSize > 100 {
-		pageSize = 100
-	}
-
-	// Apply filters
 	var filtered []domain.Document
 	for _, doc := range r.byID {
 		// Filter by status
@@ -244,12 +234,11 @@ func TestCompleteWithSummary_AlreadyCompleted_IsBenign(t *testing.T) {
 }
 
 // insertSoftDeleted guarda un documento ya borrado (soft delete) vía el fake,
-// imitando lo que producirá SoftDelete en el Slice 5.
+// imitando el estado que dejará SoftDelete cuando esté implementado.
 func insertSoftDeleted(t *testing.T, repo *inMemoryRepo, doc domain.Document) {
 	t.Helper()
 	deletedAt := time.Now().UTC().Add(-time.Hour)
-	doc.DeletedAt = &deletedAt
-	require.NoError(t, repo.Insert(context.Background(), doc))
+	require.NoError(t, repo.Insert(context.Background(), testutil.WithDeleted(doc, deletedAt)))
 }
 
 func TestGetByDocumentID_Found(t *testing.T) {
@@ -325,15 +314,11 @@ func TestGetByChecksum_SoftDeleted_ReturnsErrNotFound(t *testing.T) {
 	require.ErrorIs(t, err, domain.ErrNotFound)
 }
 
-// makeListDoc crea un documento de prueba para tests de List
+// makeListDoc crea un documento de prueba para tests de List sobre el
+// fixture compartido (testutil.NewDoc), fijando las convenciones locales:
+// sin filename y created_at relativo a hace una hora.
 func makeListDoc(id, checksum, status string) domain.Document {
-	return domain.Document{
-		DocumentID:    id,
-		Checksum:      checksum,
-		Status:        domain.Status(status),
-		ExtractedText: "texto",
-		CreatedAt:     time.Now().UTC().Add(-time.Hour),
-	}
+	return testutil.NewDoc(id, "", checksum, domain.Status(status), time.Now().UTC().Add(-time.Hour))
 }
 
 func TestList_DefaultPagination(t *testing.T) {
@@ -394,9 +379,9 @@ func TestList_FilterByFilename(t *testing.T) {
 	repo := newInMemoryRepo()
 	svc := application.NewDocumentService(repo)
 
-	repo.Insert(context.Background(), domain.Document{DocumentID: "doc-1", Checksum: "c1", ExtractedText: "x", Metadata: domain.Metadata{Filename: "informe.pdf"}})
-	repo.Insert(context.Background(), domain.Document{DocumentID: "doc-2", Checksum: "c2", ExtractedText: "x", Metadata: domain.Metadata{Filename: "factura.pdf"}})
-	repo.Insert(context.Background(), domain.Document{DocumentID: "doc-3", Checksum: "c3", ExtractedText: "x", Metadata: domain.Metadata{Filename: "INFORME_anual.pdf"}})
+	repo.Insert(context.Background(), testutil.NewDoc("doc-1", "informe.pdf", "c1", domain.StatusPending, time.Time{}))
+	repo.Insert(context.Background(), testutil.NewDoc("doc-2", "factura.pdf", "c2", domain.StatusPending, time.Time{}))
+	repo.Insert(context.Background(), testutil.NewDoc("doc-3", "INFORME_anual.pdf", "c3", domain.StatusPending, time.Time{}))
 
 	fn := "informe"
 	_, total, err := svc.List(context.Background(), domain.ListFilter{Filename: &fn}, 1, 20)
@@ -409,9 +394,9 @@ func TestList_FilterByCreatedRange(t *testing.T) {
 	svc := application.NewDocumentService(repo)
 
 	now := time.Now().UTC()
-	repo.Insert(context.Background(), domain.Document{DocumentID: "old", Checksum: "c1", ExtractedText: "x", CreatedAt: now.Add(-48 * time.Hour)})
-	repo.Insert(context.Background(), domain.Document{DocumentID: "mid", Checksum: "c2", ExtractedText: "x", CreatedAt: now.Add(-24 * time.Hour)})
-	repo.Insert(context.Background(), domain.Document{DocumentID: "new", Checksum: "c3", ExtractedText: "x", CreatedAt: now.Add(-1 * time.Hour)})
+	repo.Insert(context.Background(), testutil.NewDoc("old", "", "c1", domain.StatusPending, now.Add(-48*time.Hour)))
+	repo.Insert(context.Background(), testutil.NewDoc("mid", "", "c2", domain.StatusPending, now.Add(-24*time.Hour)))
+	repo.Insert(context.Background(), testutil.NewDoc("new", "", "c3", domain.StatusPending, now.Add(-1*time.Hour)))
 
 	from := now.Add(-36 * time.Hour)
 	to := now.Add(-12 * time.Hour)

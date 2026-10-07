@@ -16,6 +16,11 @@ test-integration:
 vet:
 	go vet ./...
 
+# Formato + estática con la toolchain estándar (no requiere herramientas externas)
+lint:
+	@fmt=$$(gofmt -l cmd internal); if [ -n "$$fmt" ]; then echo "sin formatear:"; echo "$$fmt"; exit 1; fi
+	go vet ./...
+
 # Compose por componente (mired debe existir: docker network create mired)
 compose-mongo:
 	docker compose -f docker-compose.mongo.yml up -d

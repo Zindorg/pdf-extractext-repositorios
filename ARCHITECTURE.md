@@ -1,7 +1,9 @@
 # Blueprint de Arquitectura — Microservicio de Persistencia de Documentos (MongoDB)
 
 > Documento rector del proyecto. Mantener actualizado junto con el código.
-> Última revisión: 2026-09-24. Alineado con `Especificaciones_v3.md` (hub & spoke, aislamiento de BD y zero-disk) + decisiones propias de este microservicio (dedup por checksum, ciclo de vida PENDING/COMPLETED).
+> Última revisión: 2026-10-07. Alineado con `Especificaciones_v3.md` (hub & spoke, aislamiento de BD y zero-disk) + decisiones propias de este microservicio (dedup por checksum, ciclo de vida PENDING/COMPLETED).
+>
+> **Estado de implementación**: operativos — conexiones Mongo/Redis, índices, `CreatePending`/`CompleteWithSummary`/`Get*`/`List` (service + puerto) y `/health`. Pendientes (fase de lógica) — loop de consumo del stream, soft-delete/restore, descargas y listado vía API (responden `501`), canal de retries/DLQ. Las secciones siguientes describen el contrato objetivo; §10 marca el estado por endpoint.
 
 ## 1. Tipo de arquitectura
 
@@ -22,14 +24,14 @@ Patrón central de diseño: **Repository pattern** (puerto en dominio + adaptado
 |---|---|---|
 | Lenguaje | **Go 1.26+** | Binario estático, bajo consumo por request, alta concurrencia nativa |
 | HTTP | **Gin** | Binding, validación y rutas listas; el más usado para REST en Go |
-| BD | **MongoDB 7** | BD del ecosistema original; dedup garantizado por índice único parcial |
+| BD | **MongoDB 8** | BD del ecosistema original; dedup garantizado por índice único parcial |
 | Driver Mongo | `go.mongodb.org/mongo-driver/v2` | Driver oficial de MongoDB para Go |
 | Mensajería | **Redis Streams** (cliente `go-redis/v9`) | Ingesta asíncrona del texto original y del resumen por eventos; consumer groups y DLQ nativos |
-| Migraciones | — | No aplica: índices y consumer group asegurados por la app al arrancar |
+| Migraciones | — | No aplica: los índices los asegura la app al arrancar; el consumer group se crea en la fase de lógica |
 | ID | `document_id` (UUID) de negocio + `_id` (ObjectId) interno | Clave pública vs clave de almacenamiento separadas |
 | Validación | `go-playground/validator` | Binding + reglas en DTOs y eventos |
-| Docs API | `swaggo/swag` | UI en `/swagger/index.html` (entorno interno de consumo) |
-| Tests | stdlib `testing` + `httptest` + `testify/mock` | TDD: unit, integración, contrato, e2e |
+| Docs API | — | Sin swagger hoy (decisión pendiente); el contrato HTTP vive en §10 |
+| Tests | stdlib `testing` + `httptest` + `testify` | TDD: unit, integración (`-tags integration`), contrato, e2e |
 | Deployment | Docker multi-stage + Compose (redes internas aisladas) | URL por nombre de servicio (`persister:8083`), nunca IP |
 
 ---
@@ -57,7 +59,7 @@ document-events-dlq                  solo red interna
        │
        │                           │  BSON (driver → documentos)
        ▼                          ▼
-                         [MongoDB 7 · db-net]
+                         [MongoDB 8 · db-net]
                          colección `documents`
                          data-per-service
 ```
@@ -136,7 +138,7 @@ metadata                               │
       └───────────────────┬──────────────────────┬─────────────┘
                           │  BSON                │  STREAM
               ┌───────────▼───────────┐   ┌───────▼──────────┐
-              │  MongoDB 7            │   │  Redis           │
+              │  MongoDB 8            │   │  Redis           │
               └───────────────────────┘   └──────────────────┘
 ```
 
@@ -308,6 +310,8 @@ DLQ  document-events-dlq   (copia del mensaje + causa cuando agota retries)
 ## 10. API — Contrato HTTP interno `/api/v1`
 
 > **Accesible solo por el Orquestador** por URL de red interna (`http://persister:8083`). No se expone por Traefik. La creación NO usa HTTP: llega por stream (§4/§9).
+>
+> **Estado (2026-10-07)**: `/health` implementado; el resto de endpoints responde `501` (fase de lógica pendiente). La tabla es el contrato final.
 
 | Método | Ruta | Request | Éxito | Errores |
 |---|---|---|---|---|
@@ -322,16 +326,16 @@ DLQ  document-events-dlq   (copia del mensaje + causa cuando agota retries)
 
 > **Nota de diseño**: no hay `POST /documents`. La escritura es evento-dirigida (hub & spoke). Si más adelante se quisiera una vía REST de alta, se agregaría como decisión formal (ADR) y devolvería `409` ante checksum/document_id activo.
 
-Envelope de error consistente: `{"code": "...", "message": "...", "details": {...}}` + `X-Request-ID`. Paginación default 20, máx 100. Listado excluye soft-deleted por defecto.
+Envelope de error consistente: `{"code": "...", "message": "...", "details": {...}}`. Paginación default 20, máx 100. Listado excluye soft-deleted por defecto.
 
 ---
 
 ## 11. Cross-cutting concerns
 
 - **Config**: env vars con defaults (`HTTP_PORT`, `MONGODB_URI`, `MONGODB_DATABASE`, `REDIS_ADDR`, `STREAM_NAME`, `STREAM_GROUP`, `DLQ_NAME`, `RETRY_MAX`, `RETRY_BACKOFF`, `MAX_TEXT_BYTES`, `LOG_LEVEL`) — 12-factor.
-- **Errores**: errores de dominio → HTTP (`404/409/400`) vía mapeo central en `internal/api/errors.go`.
-- **Observabilidad**: middleware de request-ID (`X-REQUEST-ID`), logger de acceso, `/health` con ping a Mongo y Redis (consumido por el Orquestador para detectar disponibilidad).
-- **Seguridad**: límite de tamaño de cuerpo (`MAX_TEXT_BYTES`) contra abuso; sin auth en MVP (red interna) — extensible con middleware de API key/JWT.
+- **Errores**: errores de dominio → HTTP (`404/409/500`) vía mapeo central en `internal/api/errors.go`.
+- **Observabilidad**: logger de acceso (Gin), `/health` con ping a Mongo y Redis (consumido por el Orquestador para detectar disponibilidad). Middleware de request-ID: pendiente.
+- **Seguridad**: sin auth en MVP (red interna) — extensible con middleware de API key/JWT. `MAX_TEXT_BYTES` está reservado en config; el límite de tamaño de cuerpo aún no se aplica.
 - **Validación**: en DTOs y eventos (binding + validator) para los bordes; reglas de negocio en el servicio.
 
 ---
@@ -344,7 +348,7 @@ Live en `docs/adr/`:
 - **ADR-002 — Checksum del productor + índice único parcial**: `checksum = SHA-256(extracted_text)` lo calcula el productor y viaja en el evento; la garantía fuerte de dedup vive en el índice único parcial de Mongo (`deleted_at: null`), no solo en la app.
 - **ADR-003 — document_id como clave de negocio**: UUID público distinto de `_id` interno; index único non-partial; soft-delete libera el checksum pero `document_id` nunca se reutiliza.
 - **ADR-004 — PENDING sin timeout + retry/DLQ**: un documento sin resumen queda guardado indefinidamente con su checksum ocupado; los mensajes fallidos usan `XAUTOCLAIM` con backoff y luego `document-events-dlq`.
-- **ADR-005 — Go + MongoDB + Redis**: Go 1.26 (binario estático), MongoDB 7 data-per-service aislado en `db-net`, Redis Streams como canal de ingesta del ecosistema.
+- **ADR-005 — Go + MongoDB + Redis**: Go 1.26 (binario estático), MongoDB 8 data-per-service aislado en `db-net`, Redis Streams como canal de ingesta del ecosistema.
 - **ADR-006 — Hub & Spoke con URL interna (no Traefik en este servicio)**: este microservicio NO se expone por Traefik; el Orquestador lo alcanza por nombre de servicio Docker (`http://persister:8083`), cumpliendo "URL, nunca IP" sin romper el aislamiento (spec §2.1/§7). Traefik solo enruta hacia el Orquestador (red pública).
 
 ---
@@ -352,7 +356,7 @@ Live en `docs/adr/`:
 ## 13. Arquitectura de despliegue
 
 - `Dockerfile` multi-stage: `golang:1.26-alpine` (build) → `distroless` nonroot (binario ~10MB, sin shell).
-- **Un `docker-compose` por componente de ESTE microservicio**: `docker-compose.mongo.yml`, `docker-compose.redis.yml` y `docker-compose.app.yml`, encadenables con `make compose-up` (ordena mongo → redis → app). **Traefik NO vive en estos composes**: pertenece al ecosistema y solo expone al Orquestador. La app crea índices y el consumer group al arrancar; no hay servicio de migraciones.
+- **Un `docker-compose` por componente de ESTE microservicio**: `docker-compose.mongo.yml`, `docker-compose.redis.yml` y `docker-compose.app.yml`, encadenables con `make compose-up` (ordena mongo → redis → app). **Traefik NO vive en estos composes**: pertenece al ecosistema y solo expone al Orquestador. La app crea los índices al arrancar (el consumer group, en la fase de lógica); no hay servicio de migraciones.
 - Redes: `mired` (**externa**, compartida con el ecosistema: aquí viven app y redis) y `db-net` con `internal: true` (creada por el compose de mongo; la referencian mongo app — la única con acceso a la BD).
 
 ```yaml
