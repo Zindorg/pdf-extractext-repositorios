@@ -86,18 +86,32 @@ func (r *MongoDocumentRepository) UpdateStatus(ctx context.Context, documentID s
 	return &doc, nil
 }
 
-func (r *MongoDocumentRepository) FindByDocumentID(ctx context.Context, documentID string) (*domain.Document, error) {
+// findOne ejecuta FindOne con filtro genérico, mapea error y devuelve *domain.Document
+func (r *MongoDocumentRepository) findOne(ctx context.Context, filter any) (*domain.Document, error) {
 	if r.collection == nil {
 		return nil, errNotConnected
 	}
-	return nil, errNotImplemented
+	res := r.collection.FindOne(ctx, filter)
+	if res.Err() != nil {
+		if errors.Is(res.Err(), mongo.ErrNoDocuments) {
+			return nil, domain.ErrNotFound
+		}
+		return nil, res.Err()
+	}
+	var persisted persistedDocument
+	if err := res.Decode(&persisted); err != nil {
+		return nil, err
+	}
+	doc := toDomain(persisted)
+	return &doc, nil
+}
+
+func (r *MongoDocumentRepository) FindByDocumentID(ctx context.Context, documentID string) (*domain.Document, error) {
+	return r.findOne(ctx, bson.M{"document_id": documentID})
 }
 
 func (r *MongoDocumentRepository) FindByChecksum(ctx context.Context, checksum string) (*domain.Document, error) {
-	if r.collection == nil {
-		return nil, errNotConnected
-	}
-	return nil, errNotImplemented
+	return r.findOne(ctx, bson.M{"checksum": checksum})
 }
 
 func (r *MongoDocumentRepository) List(ctx context.Context, filter domain.ListFilter, page, pageSize int) ([]domain.Document, int64, error) {
