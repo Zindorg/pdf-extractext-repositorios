@@ -13,7 +13,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-type fakeRepo struct{}
+type fakeRepo struct {
+	softDeleteErr error
+	restoreErr    error
+}
 
 func (fakeRepo) Insert(context.Context, domain.Document) error { return nil }
 func (fakeRepo) UpdateStatus(context.Context, string, domain.Status, *string) (*domain.Document, error) {
@@ -28,8 +31,8 @@ func (fakeRepo) FindByChecksum(context.Context, string) (*domain.Document, error
 func (fakeRepo) List(context.Context, domain.ListFilter, int, int) ([]domain.Document, int64, error) {
 	return nil, 0, nil
 }
-func (fakeRepo) SoftDelete(context.Context, string) error { return nil }
-func (fakeRepo) Restore(context.Context, string) error    { return nil }
+func (r fakeRepo) SoftDelete(context.Context, string) error { return r.softDeleteErr }
+func (r fakeRepo) Restore(context.Context, string) error    { return r.restoreErr }
 
 type healthy struct{}
 
@@ -74,4 +77,64 @@ func TestGetByDocumentIDNotImplemented(t *testing.T) {
 	router.ServeHTTP(rr, req)
 
 	require.Equal(t, http.StatusNotImplemented, rr.Code)
+}
+
+func TestHandler_SoftDelete_Success(t *testing.T) {
+	service := application.NewDocumentService(fakeRepo{})
+	handler := api.NewDocumentHandler(service, healthy{})
+	router := api.NewRouter(handler)
+
+	req := httptest.NewRequest(http.MethodDelete, "/api/v1/documents/doc-1", nil)
+	rr := httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+
+	require.Equal(t, http.StatusNoContent, rr.Code)
+}
+
+func TestHandler_SoftDelete_NotFound(t *testing.T) {
+	service := application.NewDocumentService(fakeRepo{softDeleteErr: domain.ErrNotFound})
+	handler := api.NewDocumentHandler(service, healthy{})
+	router := api.NewRouter(handler)
+
+	req := httptest.NewRequest(http.MethodDelete, "/api/v1/documents/doc-1", nil)
+	rr := httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+
+	require.Equal(t, http.StatusNotFound, rr.Code)
+}
+
+func TestHandler_Restore_Success(t *testing.T) {
+	service := application.NewDocumentService(fakeRepo{})
+	handler := api.NewDocumentHandler(service, healthy{})
+	router := api.NewRouter(handler)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/documents/doc-1/restore", nil)
+	rr := httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+
+	require.Equal(t, http.StatusNoContent, rr.Code)
+}
+
+func TestHandler_Restore_NotFound(t *testing.T) {
+	service := application.NewDocumentService(fakeRepo{restoreErr: domain.ErrNotFound})
+	handler := api.NewDocumentHandler(service, healthy{})
+	router := api.NewRouter(handler)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/documents/doc-1/restore", nil)
+	rr := httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+
+	require.Equal(t, http.StatusNotFound, rr.Code)
+}
+
+func TestHandler_Restore_ConflictChecksum(t *testing.T) {
+	service := application.NewDocumentService(fakeRepo{restoreErr: domain.ErrRestoreConflict})
+	handler := api.NewDocumentHandler(service, healthy{})
+	router := api.NewRouter(handler)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/documents/doc-1/restore", nil)
+	rr := httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+
+	require.Equal(t, http.StatusConflict, rr.Code)
 }
