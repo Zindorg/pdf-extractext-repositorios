@@ -128,6 +128,28 @@ func (r *inMemoryRepo) Restore(_ context.Context, _ string) error {
 	return nil
 }
 
+func TestRepoSoftDelete_ReleaseChecksumForReingest(t *testing.T) {
+	repo := newInMemoryRepo()
+
+	require.NoError(t, repo.Insert(context.Background(), domain.Document{
+		DocumentID: "doc-1", Checksum: "chk-1", ExtractedText: "mismo contenido",
+	}))
+	require.NoError(t, repo.SoftDelete(context.Background(), "doc-1"))
+
+	// El soft delete libera el checksum (índice parcial): re-ingiriendo el
+	// mismo contenido con un nuevo document_id debe funcionar.
+	require.NoError(t, repo.Insert(context.Background(), domain.Document{
+		DocumentID: "doc-2", Checksum: "chk-1", ExtractedText: "mismo contenido",
+	}))
+}
+
+func TestRepoSoftDelete_NotFound(t *testing.T) {
+	repo := newInMemoryRepo()
+
+	err := repo.SoftDelete(context.Background(), "no-existe")
+	require.ErrorIs(t, err, domain.ErrNotFound)
+}
+
 func TestCreatePending_StoresPendingDocument(t *testing.T) {
 	repo := newInMemoryRepo()
 	svc := application.NewDocumentService(repo)
