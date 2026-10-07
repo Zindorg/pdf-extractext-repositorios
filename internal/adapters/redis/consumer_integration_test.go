@@ -11,13 +11,14 @@ import (
 
 	"github.com/marco/pdf-extractext-repositorios/internal/application"
 	"github.com/marco/pdf-extractext-repositorios/internal/domain"
+	"github.com/marco/pdf-extractext-repositorios/internal/testutil"
 	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/require"
 )
 
 // newIntegrationConsumer arranca un consumer sobre Redis real, con streams
 // únicos por test para no colisionar entre ejecuciones.
-func newIntegrationConsumer(t *testing.T, retryMax int, backoff time.Duration) (*StreamConsumer, *redis.Client, *handlerRepo) {
+func newIntegrationConsumer(t *testing.T, retryMax int, backoff time.Duration) (*StreamConsumer, *redis.Client, *testutil.MemoryRepository) {
 	t.Helper()
 	addr := os.Getenv("REDIS_ADDR")
 	if addr == "" {
@@ -32,7 +33,7 @@ func newIntegrationConsumer(t *testing.T, retryMax int, backoff time.Duration) (
 	}
 	t.Cleanup(func() { _ = client.Close() })
 
-	repo := newHandlerRepo()
+	repo := testutil.NewMemoryRepository()
 	service := application.NewDocumentService(repo)
 	suffix := time.Now().UnixNano()
 	stream := fmt.Sprintf("it-events-%d", suffix)

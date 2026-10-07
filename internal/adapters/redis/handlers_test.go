@@ -6,73 +6,12 @@ import (
 
 	"github.com/marco/pdf-extractext-repositorios/internal/application"
 	"github.com/marco/pdf-extractext-repositorios/internal/domain"
+	"github.com/marco/pdf-extractext-repositorios/internal/testutil"
 	"github.com/stretchr/testify/require"
 )
 
-// handlerRepo es un fake del puerto DocumentRepository para probar los
-// handlers con un DocumentService real (seam del consumer).
-type handlerRepo struct {
-	byID       map[string]domain.Document // document_id → documento
-	checksumID map[string]string          // checksum → document_id (activos)
-}
-
-func newHandlerRepo() *handlerRepo {
-	return &handlerRepo{
-		byID:       make(map[string]domain.Document),
-		checksumID: make(map[string]string),
-	}
-}
-
-func (r *handlerRepo) Insert(_ context.Context, doc domain.Document) error {
-	if _, ok := r.byID[doc.DocumentID]; ok {
-		return domain.ErrDuplicateDocumentID
-	}
-	if id, ok := r.checksumID[doc.Checksum]; ok && !r.byID[id].IsDeleted() {
-		return domain.ErrDuplicateChecksum
-	}
-	r.byID[doc.DocumentID] = doc
-	r.checksumID[doc.Checksum] = doc.DocumentID
-	return nil
-}
-
-func (r *handlerRepo) UpdateStatus(_ context.Context, documentID string, status domain.Status, summary *string, summaryTimeMS int64) (*domain.Document, error) {
-	doc, ok := r.byID[documentID]
-	if !ok {
-		return nil, domain.ErrNotFound
-	}
-	doc.Status = status
-	doc.Summary = summary
-	doc.SummaryTimeMS = summaryTimeMS
-	doc.UpdatedAt = domain.Now()
-	r.byID[documentID] = doc
-	return &doc, nil
-}
-
-func (r *handlerRepo) FindByDocumentID(_ context.Context, documentID string) (*domain.Document, error) {
-	doc, ok := r.byID[documentID]
-	if !ok {
-		return nil, domain.ErrNotFound
-	}
-	return &doc, nil
-}
-
-func (r *handlerRepo) FindByChecksum(ctx context.Context, checksum string) (*domain.Document, error) {
-	id, ok := r.checksumID[checksum]
-	if !ok {
-		return nil, domain.ErrNotFound
-	}
-	return r.FindByDocumentID(ctx, id)
-}
-
-func (r *handlerRepo) List(context.Context, domain.ListFilter, int, int) ([]domain.Document, int64, error) {
-	return nil, 0, nil
-}
-
-func (r *handlerRepo) SoftDelete(context.Context, string) error { return nil }
-func (r *handlerRepo) Restore(context.Context, string) error    { return nil }
-
-func newHandler() (*MessageHandlers, *handlerRepo) {
-	repo := newHandlerRepo()
+func newHandler() (*MessageHandlers, *testutil.MemoryRepository) {
+	repo := testutil.NewMemoryRepository()
 	service := application.NewDocumentService(repo)
 	return NewMessageHandlers(service), repo
 }
