@@ -3,6 +3,8 @@ package application_test
 import (
 	"context"
 	"fmt"
+	"sort"
+	"strings"
 	"testing"
 	"time"
 
@@ -68,8 +70,64 @@ func (r *inMemoryRepo) FindByChecksum(ctx context.Context, checksum string) (*do
 	return r.FindByDocumentID(ctx, id)
 }
 
-func (r *inMemoryRepo) List(_ context.Context, _ domain.ListFilter, _, _ int) ([]domain.Document, int64, error) {
-	return nil, 0, nil
+func (r *inMemoryRepo) List(_ context.Context, filter domain.ListFilter, page, pageSize int) ([]domain.Document, int64, error) {
+	// Default pagination
+	if page <= 0 {
+		page = 1
+	}
+	if pageSize <= 0 {
+		pageSize = 20
+	}
+	if pageSize > 100 {
+		pageSize = 100
+	}
+
+	// Apply filters
+	var filtered []domain.Document
+	for _, doc := range r.byID {
+		// Filter by status
+		if filter.Status != nil && doc.Status != *filter.Status {
+			continue
+		}
+		// Filter by filename (case-insensitive contains)
+		if filter.Filename != nil {
+			filename := strings.ToLower(doc.Metadata.Filename)
+			search := strings.ToLower(*filter.Filename)
+			if !strings.Contains(filename, search) {
+				continue
+			}
+		}
+		// Filter by created range
+		if filter.CreatedFrom != nil && doc.CreatedAt.Before(*filter.CreatedFrom) {
+			continue
+		}
+		if filter.CreatedTo != nil && doc.CreatedAt.After(*filter.CreatedTo) {
+			continue
+		}
+		// Soft delete filter
+		if !filter.IncludeDeleted && doc.IsDeleted() {
+			continue
+		}
+		filtered = append(filtered, doc)
+	}
+
+	// Sort by created_at DESC (newest first)
+	sort.Slice(filtered, func(i, j int) bool {
+		return filtered[i].CreatedAt.After(filtered[j].CreatedAt)
+	})
+
+	total := int64(len(filtered))
+
+	// Pagination
+	start := (page - 1) * pageSize
+	if start >= len(filtered) {
+		return []domain.Document{}, total, nil
+	}
+	end := start + pageSize
+	if end > len(filtered) {
+		end = len(filtered)
+	}
+	return filtered[start:end], total, nil
 }
 
 func (r *inMemoryRepo) SoftDelete(_ context.Context, _ string) error {

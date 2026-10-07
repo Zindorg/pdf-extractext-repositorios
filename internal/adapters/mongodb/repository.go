@@ -115,7 +115,45 @@ func (r *MongoDocumentRepository) FindByChecksum(ctx context.Context, checksum s
 }
 
 func (r *MongoDocumentRepository) List(ctx context.Context, filter domain.ListFilter, page, pageSize int) ([]domain.Document, int64, error) {
-	return nil, 0, errNotImplemented
+	if r.collection == nil {
+		return nil, 0, errNotConnected
+	}
+
+	mongoFilter := buildMongoFilter(filter)
+
+	total, err := r.collection.CountDocuments(ctx, mongoFilter)
+	if err != nil {
+		return nil, 0, err
+	}
+
+	opts := options.Find().
+		SetSkip(int64((page - 1) * pageSize)).
+		SetLimit(int64(pageSize)).
+		SetSort(bson.D{{Key: "created_at", Value: -1}})
+
+	cursor, err := r.collection.Find(ctx, mongoFilter, opts)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer cursor.Close(ctx)
+
+	var docs []domain.Document
+	for cursor.Next(ctx) {
+		var p persistedDocument
+		if err := cursor.Decode(&p); err != nil {
+			return nil, 0, err
+		}
+		docs = append(docs, toDomain(p))
+	}
+	return docs, total, nil
+}
+
+func buildMongoFilter(f domain.ListFilter) bson.M {
+	m := bson.M{}
+	if !f.IncludeDeleted {
+		m["deleted_at"] = bson.M{"$exists": false}
+	}
+	return m
 }
 
 func (r *MongoDocumentRepository) SoftDelete(ctx context.Context, documentID string) error {

@@ -73,7 +73,16 @@ func (s *DocumentService) GetByChecksum(ctx context.Context, checksum string) (*
 }
 
 func (s *DocumentService) List(ctx context.Context, filter domain.ListFilter, page, pageSize int) ([]domain.Document, int64, error) {
-	return nil, 0, unimplemented("list")
+	if page <= 0 {
+		page = 1
+	}
+	if pageSize <= 0 {
+		pageSize = 20
+	}
+	if pageSize > 100 {
+		pageSize = 100
+	}
+	return s.repo.List(ctx, filter, page, pageSize)
 }
 
 func (s *DocumentService) SoftDelete(ctx context.Context, documentID string) error {
