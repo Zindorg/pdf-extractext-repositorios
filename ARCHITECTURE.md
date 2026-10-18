@@ -443,9 +443,8 @@ services:
     ports: [ "127.0.0.1:8083:8083" ]
     security_opt: [ no-new-privileges:true ]
     environment:
-      - HTTP_PORT=8083
-      - MONGODB_URI=mongodb://mongo:27017/text_extractor_db
-      - REDIS_ADDR=redis:6379
+      MONGODB_URI: mongodb://mongo:27017/${MONGODB_DATABASE:-text_extractor_db}
+      REDIS_ADDR: redis:6379
 
 networks:
   mired: { external: true }
@@ -469,7 +468,7 @@ Pirámide de pruebas, todo conducido por **TDD** (rojo → verde):
 | Consumer Redis | Integración (Redis real en Docker) | original → PENDING, original+summary → COMPLETED, duplicado ACK+descarte, summary huérfano → retry → DLQ |
 | e2e | Smoke contra compose | XADD `original`/`summary` al stream → verificar en Mongo vía HTTP interno (`http://persister:8083`): lectura, descarga, soft-delete |
 
-Comandos: `make test`, `make test-integration`, `go vet ./...`.
+Comandos: `make test`, `make test-integration`, `make test-e2e`, `go vet ./...`.
 
 ---
 
