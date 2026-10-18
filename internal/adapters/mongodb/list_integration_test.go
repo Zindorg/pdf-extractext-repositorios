@@ -72,9 +72,10 @@ func insertDoc(t *testing.T, repo *MongoDocumentRepository, doc domain.Document)
 }
 
 // integrationDoc envuelve el fixture compartido (testutil.NewDoc) con las
-// convenciones de este test: checksum derivado del id.
+// convenciones de este test: checksum derivado del id. El timestamp se trunca
+// a milisegundos porque Mongo almacena las fechas con esa precisión.
 func integrationDoc(id, filename, status string, created time.Time) domain.Document {
-	return testutil.NewDoc(id, filename, "chk-"+id, domain.Status(status), created)
+	return testutil.NewDoc(id, filename, "chk-"+id, domain.Status(status), created.Truncate(time.Millisecond))
 }
 
 func TestList_Integration_DefaultPaginationExcludesDeleted(t *testing.T) {
