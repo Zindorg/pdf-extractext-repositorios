@@ -1,9 +1,11 @@
 # Redis del microservicio persister: canal de ingesta (stream document-events).
 # Compartido con el ecosistema por la red externa mired (alias redis).
+# El puerto se publica únicamente en loopback para dev/tests locales.
 services:
   redis:
     image: redis:7-alpine
     container_name: persister-redis
+    restart: unless-stopped
     command: ["redis-server", "--appendonly", "yes"]
     volumes:
       - redis_data:/data
@@ -11,7 +13,14 @@ services:
       mired:
         aliases: [redis]
     ports:
-      - "6379:6379"
+      - "127.0.0.1:6379:6379"
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
 
 networks:
   mired:
