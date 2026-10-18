@@ -32,6 +32,7 @@ docker compose -f docker-compose.redis.yml up -d
 
 # tests
 make test
+make test-e2e        # e2e vertical (requiere Mongo + Redis del compose)
 
 # servidor (puerto 8083)
 make run

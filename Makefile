@@ -1,4 +1,4 @@
-.PHONY: build run test test-integration vet lint compose-up compose-down logs compose-mongo compose-redis compose-app
+.PHONY: build run test test-integration test-e2e vet lint compose-up compose-down logs compose-mongo compose-redis compose-app
 
 build:
 	go build -o bin/persister ./cmd/server
@@ -12,6 +12,10 @@ test:
 # Tests de integración: requieren MongoDB y Redis levantados y accesibles.
 test-integration:
 	go test -tags=integration ./internal/adapters/mongodb/... ./internal/adapters/redis/...
+
+# Test e2e vertical: requiere Mongo + Redis (compose). Ejercita XADD → API HTTP.
+test-e2e:
+	go test -tags=integration ./test/e2e/...
 
 vet:
 	go vet ./...
