@@ -2,6 +2,7 @@ package api
 
 import (
 	"github.com/gin-gonic/gin"
+	"github.com/marco/pdf-extractext-repositorios/internal/api/middleware"
 )
 
 // NewRouter construye el router Gin con middleware y el grupo /api/v1.
@@ -9,6 +10,7 @@ import (
 func NewRouter(handler *DocumentHandler) *gin.Engine {
 	r := gin.New()
 	r.Use(gin.Logger(), gin.Recovery())
+	r.Use(middleware.RequestID())
 
 	v1 := r.Group("/api/v1")
 	{
