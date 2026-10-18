@@ -17,7 +17,7 @@ con la tabla de evaluación siguiente. Cada fila del delta queda categorizada:
 | 4 | `event_type` "además del nombre del mensaje" | Adoptar con fallback tolerante a `event` |
 | 5 | `summary_requested` / `summary_status` | Adoptar (solo parse, no persistir) |
 | 6 | `mime_type` top-level | Adoptar (mapear a `Metadata.MimeType`) |
-| 7 | Header `X-Request-ID` → `X-Document-Id` | Diferir (depende de middleware routing) |
+| 7 | Header `X-Request-ID` → `X-Document-Id` | Aplicado como propagación de `X-Request-ID` (Slice 8); **no** se renombra a `X-Document-Id` (ver nota) |
 | 8 | Red `mired` | Ya hecho (compose, Slices anteriores) |
 | 9 | Prefijo `/api/v1` | Ya hecho (Slices anteriores) |
 | 10 | Alias/dominio compose | Ya definido |
@@ -38,6 +38,11 @@ con la tabla de evaluación siguiente. Cada fila del delta queda categorizada:
 - **Migración de tiempos**: `ProcessingTimeMS` deja de persistirse; el dominio
   guarda `ExtractionTimeMS` y `SummaryTimeMS`; la API de lectura expone la suma
   como `processing_time_ms`.
+- **Header de correlación (fila 7)**: se propaga `X-Request-ID` tal cual llega
+  (si viene) mediante el middleware de `internal/api/middleware`, en línea con
+  `ARCHITECTURE_REPOSITORIES.md` del ecosistema. Se descarta el renombre a
+  `X-Document-Id`: el header es de correlación de request y no participa de la
+  lógica; el identificador del documento ya viaja en la ruta/evento.
 - **Docs honestas**: `ARCHITECTURE.md`, diagramas PUML y esta carpeta reflejan
   el estado real del código.
 
@@ -46,9 +51,10 @@ con la tabla de evaluación siguiente. Cada fila del delta queda categorizada:
 - **No adoptar (contrato propio)**: mantenía `processing_time_ms` y `event:
   original/summary`, pero rompía la integración con el Orquestador al primer
   evento real. Rechazada.
-- **Adoptar todo (incluida fila 7)**: sobre-ingeniería; la fila 7 depende de un
-  middleware de request-ID pendiente. Diferida. La fila 12 se aplicó en el Slice 7
-  (descargas) con el code literal `summary_pending`.
+- **Diferir la fila 7** (posición original): se descartó al agregar el middleware
+  de request-ID en el Slice 8; la propagación de `X-Request-ID` no depende de la
+  lógica de routing. La fila 12 se aplicó en el Slice 7 (descargas) con el code
+  literal `summary_pending`.
 
 ## Referencias
 

@@ -1,9 +1,9 @@
 # Blueprint de Arquitectura — Microservicio de Persistencia de Documentos (MongoDB)
 
 > Documento rector del proyecto. Mantener actualizado junto con el código.
-> Última revisión: 2026-10-07. Alineado con `Especificaciones_v3.md` (hub & spoke, aislamiento de BD y zero-disk) + decisiones propias de este microservicio (dedup por checksum, ciclo de vida PENDING/COMPLETED).
+> Última revisión: 2026-10-18. Alineado con `Especificaciones_v3.md` (hub & spoke, aislamiento de BD y zero-disk) + decisiones propias de este microservicio (dedup por checksum, ciclo de vida PENDING/COMPLETED).
 >
-> **Estado de implementación**: operativos — conexiones Mongo/Redis, índices, `CreatePending`/`CompleteWithSummary`/`Get*`/`List`/descargas HTTP (service + API), soft-delete/restore (service + API), `/health` y el loop de consumo del stream (ACK/retry/DLQ). Sin endpoints en `501`. Pendientes: request-ID (delta 7), decisión Swagger, smoke e2e contra compose (etapa final). §10 es el contrato real por endpoint.
+> **Estado de implementación**: operativos — conexiones Mongo/Redis, índices, `CreatePending`/`CompleteWithSummary`/`Get*`/`List`/descargas HTTP (service + API), soft-delete/restore (service + API), `/health`, el loop de consumo del stream (ACK/retry/DLQ) y el middleware de `X-Request-ID`. Sin endpoints en `501`. Swagger descartado para el MVP (ADR-008); test e2e vertical agregado en `test/e2e` (requiere compose). §10 es el contrato real por endpoint.
 
 ## 1. Tipo de arquitectura
 
@@ -30,7 +30,7 @@ Patrón central de diseño: **Repository pattern** (puerto en dominio + adaptado
 | Migraciones | — | No aplica: los índices los asegura la app al arrancar; el consumer group se crea también al arrancar (`ensureGroup`, mkstream) |
 | ID | `document_id` (UUID) de negocio + `_id` (ObjectId) interno | Clave pública vs clave de almacenamiento separadas |
 | Validación | `go-playground/validator` | Binding + reglas en DTOs y eventos |
-| Docs API | — | Sin swagger hoy (decisión pendiente); el contrato HTTP vive en §10 |
+| Docs API | — | Sin Swagger (descartado en MVP, ADR-008); el contrato HTTP vive en §10 |
 | Tests | stdlib `testing` + `httptest` + `testify` | TDD: unit, integración (`-tags integration`), contrato, e2e |
 | Deployment | Docker multi-stage + Compose (redes internas aisladas) | URL por nombre de servicio (`persister:8083`), nunca IP |
 
@@ -347,7 +347,7 @@ Envelope de error consistente: `{"code": "...", "message": "...", "details": {..
 
 - **Config**: env vars con defaults (`HTTP_PORT`, `MONGODB_URI`, `MONGODB_DATABASE`, `REDIS_ADDR`, `STREAM_NAME`, `STREAM_GROUP`, `DLQ_NAME`, `RETRY_MAX`, `RETRY_BACKOFF`, `MAX_TEXT_BYTES`, `LOG_LEVEL`) — 12-factor.
 - **Errores**: errores de dominio → HTTP (`404/409/500`) vía mapeo central en `internal/api/errors.go`.
-- **Observabilidad**: logger de acceso (Gin), `/health` con ping a Mongo y Redis (consumido por el Orquestador para detectar disponibilidad). Middleware de request-ID: pendiente.
+- **Observabilidad**: logger de acceso (Gin), `/health` con ping a Mongo y Redis (consumido por el Orquestador para detectar disponibilidad). Middleware de request-ID (`X-Request-ID`): implementado; propaga el header si viene, no lo genera.
 - **Seguridad**: sin auth en MVP (red interna) — extensible con middleware de API key/JWT. `MAX_TEXT_BYTES` está reservado en config; el límite de tamaño de cuerpo aún no se aplica.
 - **Validación**: en DTOs y eventos (binding + validator) para los bordes; reglas de negocio en el servicio.
 
@@ -363,7 +363,8 @@ Live en `docs/adr/`:
 - **ADR-004 — PENDING sin timeout + retry/DLQ**: un documento sin resumen queda guardado indefinidamente con su checksum ocupado; los mensajes fallidos usan `XAUTOCLAIM` con backoff y luego `document-events-dlq`.
 - **ADR-005 — Go + MongoDB + Redis**: Go 1.26 (binario estático), MongoDB 8 data-per-service aislado en `db-net`, Redis Streams como canal de ingesta del ecosistema.
 - **ADR-006 — Hub & Spoke con URL interna (no Traefik en este servicio)**: este microservicio NO se expone por Traefik; el Orquestador lo alcanza por nombre de servicio Docker (`http://persister:8083`), cumpliendo "URL, nunca IP" sin romper el aislamiento (spec §2.1/§7). Traefik solo enruta hacia el Orquestador (red pública).
-- **ADR-007 — Reconocimiento del contrato de eventos del Orquestador (delta-persister)**: se adoptan los deltas 1–6 (`summary_resolved`, `extraction_time_ms`/`summary_time_ms`, `schema_version`, `event_type` con fallback a `event`, `summary_requested`/`summary_status`, `mime_type` top-level); se aplican 8–12 (red/prefix/consumo ya hechos; el 12 —`summary_pending` 409— en el Slice 7) y se difiere solo el 7 (request-id). Mensajes inválidos ⇒ retry → DLQ; sin idempotencia por `event_id`.
+- **ADR-007 — Reconocimiento del contrato de eventos del Orquestador (delta-persister)**: se adoptan los deltas 1–6 (`summary_resolved`, `extraction_time_ms`/`summary_time_ms`, `schema_version`, `event_type` con fallback a `event`, `summary_requested`/`summary_status`, `mime_type` top-level); se aplican 7–12 (el 7 —request-ID— con el middleware que propaga `X-Request-ID`; el 12 —`summary_pending` 409— en el Slice 7). Mensajes inválidos ⇒ retry → DLQ; sin idempotencia por `event_id`.
+- **ADR-008 — Swagger/OpenAPI**: descartado para el MVP; el contrato HTTP vive en §10. Reversible con un nuevo ADR si el ecosistema lo requiere.
 
 ---
 

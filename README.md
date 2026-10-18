@@ -69,10 +69,11 @@ Composes individuales: `make compose-mongo`, `make compose-redis`, `make compose
 
 Solo lectura/borrado; no hay `POST /documents` (la creación llega por stream).
 
-> **Estado actual (2026-10-07)**: `/health`, lectura por `id`/`checksum`,
+> **Estado actual (2026-10-18)**: `/health`, lectura por `id`/`checksum`,
 > listado, descargas, soft-delete y restore implementados (sin endpoints en
-> `501`). Pendientes: request-ID, decisión Swagger, smoke e2e contra compose
-> (etapa final). La tabla describe el contrato real.
+> `501`). Middleware que propaga `X-Request-ID`; Swagger descartado para el MVP
+> (ADR-008); test e2e vertical en `test/e2e` (requiere compose). La tabla
+> describe el contrato real.
 
 | Método | Ruta                                        | Respuesta                     |
 | ------ | ------------------------------------------- | ----------------------------- |
