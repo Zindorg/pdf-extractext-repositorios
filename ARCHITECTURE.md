@@ -372,26 +372,39 @@ Live en `docs/adr/`:
 
 - `Dockerfile` multi-stage: `golang:1.26-alpine` (build) → `distroless` nonroot (binario ~10MB, sin shell).
 - **Un `docker-compose` por componente de ESTE microservicio**: `docker-compose.mongo.yml`, `docker-compose.redis.yml` y `docker-compose.app.yml`, encadenables con `make compose-up` (ordena mongo → redis → app). **Traefik NO vive en estos composes**: pertenece al ecosistema y solo expone al Orquestador. La app crea los índices y el consumer group al arrancar; no hay servicio de migraciones.
-- Redes: `mired` (**externa**, compartida con el ecosistema: aquí viven app y redis) y `db-net` con `internal: true` (creada por el compose de mongo; la referencian mongo app — la única con acceso a la BD).
+- Redes: `mired` (**externa**, compartida con el ecosistema: aquí viven app y redis) y `db-net` con `internal: true` (creada por el compose de mongo; la referencian mongo y app — la única con acceso a la BD).
+- **Endurecimiento**: los puertos se publican solo en `127.0.0.1` (nunca en la LAN), cada servicio corre con `no-new-privileges:true` y `restart: unless-stopped`, y Mongo/Redis declaran `healthcheck` (la app no puede: imagen distroless sin shell). Mongo corre **standalone** (sin replica set): el código no usa transacciones ni change streams.
+- **Acceso del host a Mongo**: Docker **no publica puertos** de contenedores conectados solo a redes `internal`. Por eso Mongo va dual-homed: `db-net` (internal, ruta privada app↔mongo) **y** `db-dev` (no-internal, con `enable_ip_masquerade=false`), que habilita el puerto en `127.0.0.1` para dev/tests **sin salida a internet**. Sin esto, los tests de integración de Mongo se saltaban en silencio (`t.Skip`).
 
 ```yaml
 # docker-compose.mongo.yml
 services:
   mongo:
     image: mongo:8
-    command: ["--replSet", "rs0", "--bind_ip_all", "--port", "27017"]
+    restart: unless-stopped
+    environment:
+      MONGO_INITDB_DATABASE: ${MONGODB_DATABASE:-text_extractor_db}
+    volumes: [ mongo_data:/data/db ]
     networks:
       db-net:
         aliases: [ mongo ]
-
-  mongo-init:  # inicializa el replica set al primer arranque
-    image: mongo:8
-    depends_on: [ mongo ]
+      db-dev:
+    ports: [ "127.0.0.1:27017:27017" ]
+    security_opt: [ no-new-privileges:true ]
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
 
 networks:
   db-net:
     name: db-net
     internal: true
+  db-dev:  # no-internal solo para publicar en loopback; sin masquerade ⇒ sin egress
+    driver: bridge
+    driver_opts:
+      com.docker.network.bridge.enable_ip_masquerade: "false"
 ```
 
 ```yaml
@@ -399,9 +412,19 @@ networks:
 services:
   redis:
     image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes: [ redis_data:/data ]
     networks:
       mired:
         aliases: [ redis ]
+    ports: [ "127.0.0.1:6379:6379" ]
+    security_opt: [ no-new-privileges:true ]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
 
 networks:
   mired: { external: true }
@@ -412,10 +435,13 @@ networks:
 services:
   persister:
     build: .
+    restart: unless-stopped
     networks:
       mired:
         aliases: [ persister ]   # el Orquestador usa http://persister:8083
       db-net: { external: true } # creada por el compose de mongo
+    ports: [ "127.0.0.1:8083:8083" ]
+    security_opt: [ no-new-privileges:true ]
     environment:
       - HTTP_PORT=8083
       - MONGODB_URI=mongodb://mongo:27017/text_extractor_db

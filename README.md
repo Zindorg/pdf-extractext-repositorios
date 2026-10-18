@@ -26,7 +26,7 @@ internal/testutil/   fixtures de documentos compartidos por los tests
 ## Correr localmente
 
 ```sh
-# dependencias: Mongo 8 (replica set) + Redis 7
+# dependencias: Mongo 8 + Redis 7
 docker compose -f docker-compose.mongo.yml up -d
 docker compose -f docker-compose.redis.yml up -d
 
@@ -48,7 +48,7 @@ make compose-up        # mongo + redis + persister
 curl http://localhost:8083/api/v1/health   # {"status":"ok"}
 ```
 
-Composes individuales: `make compose-mongo`, `make compose-redis`, `make compose-app`. La app queda expuesta al ecosistema como `http://persister:8083` en la red `mired`.
+Composes individuales: `make compose-mongo`, `make compose-redis`, `make compose-app`. La app queda expuesta al ecosistema como `http://persister:8083` en la red `mired`. Por seguridad, los puertos del host se publican solo en `127.0.0.1` (nunca en la LAN) y Mongo queda aislada en la red interna `db-net`.
 
 ## Configuración
 
