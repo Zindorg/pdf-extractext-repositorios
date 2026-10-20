@@ -4,6 +4,7 @@ package redis
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"testing"
@@ -49,14 +50,29 @@ func newIntegrationConsumer(t *testing.T, retryMax int, backoff time.Duration, m
 	return consumer, client, repo
 }
 
-// publish añade un evento JSON al stream del consumer.
+// publish añade un evento JSON al stream del consumer. El XADD lleva dos
+// fields: document_id como clave del mensaje y payload con el JSON entero
+// (delta #13, events.md §Convenciones).
 func publish(t *testing.T, client *redis.Client, consumer *StreamConsumer, payload string) {
 	t.Helper()
 	_, err := client.XAdd(context.Background(), &redis.XAddArgs{
 		Stream: consumer.streamName,
-		Values: map[string]any{streamPayloadField: payload},
+		Values: map[string]any{"document_id": documentIDOf(t, payload), "payload": payload},
 	}).Result()
 	require.NoError(t, err)
+}
+
+// documentIDOf extrae el document_id del payload para usarlo como clave del
+// mensaje; un JSON ilegible usa el payload entero para no romper el test.
+func documentIDOf(t *testing.T, payload string) string {
+	t.Helper()
+	var body struct {
+		DocumentID string `json:"document_id"`
+	}
+	if err := json.Unmarshal([]byte(payload), &body); err != nil || body.DocumentID == "" {
+		return payload
+	}
+	return body.DocumentID
 }
 
 // pendingLen cuenta los mensajes pendientes (sin ACK) del grupo.

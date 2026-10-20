@@ -95,7 +95,7 @@ func publishEvent(t *testing.T, redisCli *redis.Client, stream string, event map
 	require.NoError(t, err)
 	res := redisCli.XAdd(context.Background(), &redis.XAddArgs{
 		Stream: stream,
-		Values: map[string]any{"event": string(b)},
+		Values: map[string]any{"document_id": event["document_id"], "payload": string(b)},
 	})
 	require.NoError(t, res.Err())
 }
