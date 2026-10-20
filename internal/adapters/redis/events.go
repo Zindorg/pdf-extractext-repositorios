@@ -129,6 +129,9 @@ func (e *OriginalEvent) validate() error {
 // validateSize aplica el límite de bytes al extracto extraído; el tope es
 // inclusivo (un extracto de exactamente max bytes se acepta).
 func (e *OriginalEvent) validateSize(max int64) error {
+	if n := int64(len(e.ExtractedText)); n > max {
+		return fmt.Errorf("%w: %d > %d bytes", domain.ErrTextTooLarge, n, max)
+	}
 	return nil
 }
 

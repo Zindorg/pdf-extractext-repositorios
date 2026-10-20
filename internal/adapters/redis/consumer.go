@@ -176,6 +176,9 @@ func (c *StreamConsumer) handleOriginal(ctx context.Context, payload string) err
 	if err != nil {
 		return err
 	}
+	if err := ev.validateSize(c.maxTextBytes); err != nil {
+		return err
+	}
 	return c.handlers.OnOriginal(ctx, ev)
 }
 
