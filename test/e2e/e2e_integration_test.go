@@ -45,7 +45,7 @@ func setupE2E(t *testing.T) (*httptest.Server, *redis.Client, *mongo.Client, str
 		DLQName:         "document-events-e2e-dlq",
 		RetryMax:        3,
 		RetryBackoff:    50 * time.Millisecond,
-		MaxTextBytes:    50 << 20,
+		MaxTextBytes:    15 << 20,
 		LogLevel:        "info",
 	}
 
@@ -54,6 +54,7 @@ func setupE2E(t *testing.T) (*httptest.Server, *redis.Client, *mongo.Client, str
 	require.NoError(t, redisCli.Ping(context.Background()).Err())
 	_ = redisCli.Del(context.Background(), cfg.StreamName, cfg.DLQName).Err()
 	_ = redisCli.XGroupDestroy(context.Background(), cfg.StreamName, cfg.StreamGroup).Err()
+	require.NoError(t, redisCli.XGroupCreateMkStream(context.Background(), cfg.StreamName, cfg.StreamGroup, "$").Err())
 
 	// Mongo
 	mongoCli, err := mongo.Connect(options.Client().ApplyURI(cfg.MongoDBURI))
@@ -99,6 +100,39 @@ func publishEvent(t *testing.T, redisCli *redis.Client, stream string, event map
 	require.NoError(t, res.Err())
 }
 
+// documentStatus lee el status del documento; false si aún no responde 200.
+func documentStatus(t *testing.T, client *http.Client, url string) (string, bool) {
+	t.Helper()
+	resp, err := client.Get(url)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return "", false
+	}
+	var doc struct {
+		Status string `json:"status"`
+	}
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&doc))
+	return doc.Status, true
+}
+
+// waitForStatus reintenta el GET hasta que el documento responde con el
+// status esperado o se agota el tiempo.
+func waitForStatus(t *testing.T, client *http.Client, url, status string) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		got, ok := documentStatus(t, client, url)
+		if ok && got == status {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("esperaba status %q, último %q", status, got)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}
+
 func TestE2E_Flow_OriginalThenSummaryThenOperations(t *testing.T) {
 	// Skip if no Redis/Mongo running in local env
 	if os.Getenv("SKIP_E2E") != "" {
@@ -129,7 +163,7 @@ func TestE2E_Flow_OriginalThenSummaryThenOperations(t *testing.T) {
 		"metadata":          map[string]any{"filename": "test.pdf", "size_bytes": 10, "page_count": 1},
 	}
 	publishEvent(t, redisCli, stream, original)
-	time.Sleep(150 * time.Millisecond)
+	waitForStatus(t, client, srv.URL+"/api/v1/documents/"+docID, "PENDING")
 
 	// 3. GET by id - pending
 	resp, err = client.Get(srv.URL + "/api/v1/documents/" + docID)
@@ -173,7 +207,7 @@ func TestE2E_Flow_OriginalThenSummaryThenOperations(t *testing.T) {
 		"summary_time_ms": 120,
 	}
 	publishEvent(t, redisCli, stream, summary)
-	time.Sleep(150 * time.Millisecond)
+	waitForStatus(t, client, srv.URL+"/api/v1/documents/"+docID, "COMPLETED")
 
 	// 8. GET by id - completed with processing time
 	resp, err = client.Get(srv.URL + "/api/v1/documents/" + docID)
