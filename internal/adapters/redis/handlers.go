@@ -24,16 +24,44 @@ func (h *MessageHandlers) OnOriginal(ctx context.Context, ev *OriginalEvent) err
 	_, err := h.service.CreatePending(ctx, domain.Document{
 		DocumentID:       ev.DocumentID,
 		Checksum:         ev.Checksum,
+		SummaryStatus:    summaryStatusFrom(ev),
 		ExtractedText:    ev.ExtractedText,
 		ExtractionTimeMS: ev.ExtractionTimeMS,
 		Metadata: domain.Metadata{
-			Filename:  ev.Metadata.Filename,
+			Filename:  filenameOf(ev),
 			SizeBytes: ev.Metadata.SizeBytes,
 			PageCount: ev.Metadata.PageCount,
 			MimeType:  ev.MimeType,
 		},
 	})
 	return swallowDuplicate(err)
+}
+
+// summaryStatusFrom normaliza el eje de resumen al ingerir. El original puede
+// declarar RESOLVED porque el resumen ya se publicó, pero hasta que llegue su
+// texto el documento sigue pendiente; FAILED no tiene texto por venir y se
+// conserva.
+func summaryStatusFrom(ev *OriginalEvent) domain.SummaryStatus {
+	declared := domain.SummaryStatus(ev.SummaryStatus)
+	switch declared {
+	case domain.SummaryNotRequested, domain.SummaryFailed:
+		return declared
+	case domain.SummaryPending, domain.SummaryResolved:
+		return domain.SummaryPending
+	}
+	if ev.SummaryRequested {
+		return domain.SummaryPending
+	}
+	return domain.SummaryNotRequested
+}
+
+// filenameOf prefiere el filename de primer nivel del evento y cae al que
+// declare metadata, en ese orden.
+func filenameOf(ev *OriginalEvent) string {
+	if ev.Filename != "" {
+		return ev.Filename
+	}
+	return ev.Metadata.Filename
 }
 
 // OnSummaryResolved completa el documento con el resumen. Un resumen de un

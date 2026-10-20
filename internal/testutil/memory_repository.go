@@ -36,15 +36,15 @@ func (r *MemoryRepository) Insert(_ context.Context, doc domain.Document) error 
 	return nil
 }
 
-// UpdateStatus persiste el cambio de estado (fake fiel del port):
-// inexistente → ErrNotFound (huérfano); existente → COMPLETED + updated_at.
-func (r *MemoryRepository) UpdateStatus(_ context.Context, documentID string, status domain.Status, summary *string, summaryTimeMS int64) (*domain.Document, error) {
+// Complete persiste el resumen y pasa el eje a RESOLVED (fake fiel del port):
+// inexistente → ErrNotFound (huérfano); existente → RESOLVED + updated_at.
+func (r *MemoryRepository) Complete(_ context.Context, documentID string, summary string, summaryTimeMS int64) (*domain.Document, error) {
 	doc, ok := r.byID[documentID]
 	if !ok {
 		return nil, domain.ErrNotFound
 	}
-	doc.Status = status
-	doc.Summary = summary
+	doc.SummaryStatus = domain.SummaryResolved
+	doc.Summary = &summary
 	doc.SummaryTimeMS = summaryTimeMS
 	doc.UpdatedAt = domain.Now()
 	r.byID[documentID] = doc
@@ -101,7 +101,7 @@ func (r *MemoryRepository) matchFilter(filter domain.ListFilter) []domain.Docume
 }
 
 func matches(filter domain.ListFilter, doc domain.Document) bool {
-	if filter.Status != nil && doc.Status != *filter.Status {
+	if filter.SummaryStatus != nil && doc.SummaryStatus != *filter.SummaryStatus {
 		return false
 	}
 	if filter.Filename != nil {

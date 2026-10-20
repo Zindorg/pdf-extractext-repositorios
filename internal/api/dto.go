@@ -11,7 +11,6 @@ import (
 type DocumentResponse struct {
 	DocumentID       string          `json:"document_id"`
 	Checksum         string          `json:"checksum"`
-	Status           string          `json:"status"`
 	SummaryStatus    string          `json:"summary_status"`
 	ExtractedText    string          `json:"extracted_text"`
 	Summary          *string         `json:"summary"`
@@ -36,7 +35,7 @@ func toResponse(doc domain.Document) DocumentResponse {
 	return DocumentResponse{
 		DocumentID:       doc.DocumentID,
 		Checksum:         doc.Checksum,
-		Status:           string(doc.Status),
+		SummaryStatus:    string(doc.SummaryStatus),
 		ExtractedText:    doc.ExtractedText,
 		Summary:          doc.Summary,
 		Metadata:         doc.Metadata,

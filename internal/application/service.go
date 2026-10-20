@@ -31,7 +31,6 @@ func notFoundIfDeleted(doc *domain.Document, err error) (*domain.Document, error
 
 func (s *DocumentService) CreatePending(ctx context.Context, doc domain.Document) (*domain.Document, error) {
 	now := domain.Now()
-	doc.Status = domain.StatusPending
 	doc.CreatedAt = now
 	doc.UpdatedAt = now
 
@@ -46,11 +45,10 @@ func (s *DocumentService) CompleteWithSummary(ctx context.Context, documentID, s
 	if err != nil {
 		return nil, err
 	}
-	if current.IsCompleted() {
+	if current.HasSummary() {
 		return current, nil
 	}
-	sum := summary
-	return s.repo.UpdateStatus(ctx, documentID, domain.StatusCompleted, &sum, summaryTimeMS)
+	return s.repo.Complete(ctx, documentID, summary, summaryTimeMS)
 }
 
 func (s *DocumentService) GetByDocumentID(ctx context.Context, documentID string) (*domain.Document, error) {

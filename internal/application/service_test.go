@@ -110,6 +110,7 @@ func TestCreatePending_StoresPendingDocument(t *testing.T) {
 	payload := domain.Document{
 		DocumentID:       "doc-1",
 		Checksum:         "abc123",
+		SummaryStatus:    domain.SummaryPending,
 		ExtractedText:    "contenido extraído",
 		ExtractionTimeMS: 40,
 		SummaryTimeMS:    2,
@@ -124,7 +125,7 @@ func TestCreatePending_StoresPendingDocument(t *testing.T) {
 	got, err := svc.CreatePending(context.Background(), payload)
 	require.NoError(t, err)
 	require.NotNil(t, got)
-	require.Equal(t, domain.StatusPending, got.Status)
+	require.Equal(t, domain.SummaryPending, got.SummaryStatus)
 	require.False(t, got.CreatedAt.IsZero())
 	require.False(t, got.IsDeleted())
 
@@ -226,6 +227,7 @@ func TestGetByDocumentID_Found(t *testing.T) {
 
 	_, err := svc.CreatePending(context.Background(), domain.Document{
 		DocumentID: "doc-1", Checksum: "abc123", ExtractedText: "contenido",
+		SummaryStatus: domain.SummaryPending,
 	})
 	require.NoError(t, err)
 
@@ -233,7 +235,7 @@ func TestGetByDocumentID_Found(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, got)
 	require.Equal(t, "doc-1", got.DocumentID)
-	require.Equal(t, domain.StatusPending, got.Status)
+	require.Equal(t, domain.SummaryPending, got.SummaryStatus)
 	require.Equal(t, "contenido", got.ExtractedText)
 }
 
@@ -297,7 +299,7 @@ func TestGetByChecksum_SoftDeleted_ReturnsErrNotFound(t *testing.T) {
 // fixture compartido (testutil.NewDoc), fijando las convenciones locales:
 // sin filename y created_at relativo a hace una hora.
 func makeListDoc(id, checksum, status string) domain.Document {
-	return testutil.NewDoc(id, "", checksum, domain.Status(status), time.Now().UTC().Add(-time.Hour))
+	return testutil.NewDoc(id, "", checksum, domain.SummaryStatus(status), time.Now().UTC().Add(-time.Hour))
 }
 
 func TestList_DefaultPagination(t *testing.T) {
@@ -341,16 +343,16 @@ func TestList_FilterByStatus(t *testing.T) {
 	svc := application.NewDocumentService(repo)
 
 	repo.Insert(context.Background(), makeListDoc("doc-1", "chk-1", "PENDING"))
-	repo.Insert(context.Background(), makeListDoc("doc-2", "chk-2", "COMPLETED"))
+	repo.Insert(context.Background(), makeListDoc("doc-2", "chk-2", "RESOLVED"))
 	repo.Insert(context.Background(), makeListDoc("doc-3", "chk-3", "PENDING"))
 
-	pending := domain.StatusPending
-	docs, total, err := svc.List(context.Background(), domain.ListFilter{Status: &pending}, 1, 20)
+	pending := domain.SummaryPending
+	docs, total, err := svc.List(context.Background(), domain.ListFilter{SummaryStatus: &pending}, 1, 20)
 	require.NoError(t, err)
 	require.Equal(t, int64(2), total)
 	require.Len(t, docs, 2)
 	for _, d := range docs {
-		require.Equal(t, domain.StatusPending, d.Status)
+		require.Equal(t, domain.SummaryPending, d.SummaryStatus)
 	}
 }
 
@@ -358,9 +360,9 @@ func TestList_FilterByFilename(t *testing.T) {
 	repo := newRepo()
 	svc := application.NewDocumentService(repo)
 
-	repo.Insert(context.Background(), testutil.NewDoc("doc-1", "informe.pdf", "c1", domain.StatusPending, time.Time{}))
-	repo.Insert(context.Background(), testutil.NewDoc("doc-2", "factura.pdf", "c2", domain.StatusPending, time.Time{}))
-	repo.Insert(context.Background(), testutil.NewDoc("doc-3", "INFORME_anual.pdf", "c3", domain.StatusPending, time.Time{}))
+	repo.Insert(context.Background(), testutil.NewDoc("doc-1", "informe.pdf", "c1", domain.SummaryPending, time.Time{}))
+	repo.Insert(context.Background(), testutil.NewDoc("doc-2", "factura.pdf", "c2", domain.SummaryPending, time.Time{}))
+	repo.Insert(context.Background(), testutil.NewDoc("doc-3", "INFORME_anual.pdf", "c3", domain.SummaryPending, time.Time{}))
 
 	fn := "informe"
 	_, total, err := svc.List(context.Background(), domain.ListFilter{Filename: &fn}, 1, 20)
@@ -373,9 +375,9 @@ func TestList_FilterByCreatedRange(t *testing.T) {
 	svc := application.NewDocumentService(repo)
 
 	now := time.Now().UTC()
-	repo.Insert(context.Background(), testutil.NewDoc("old", "", "c1", domain.StatusPending, now.Add(-48*time.Hour)))
-	repo.Insert(context.Background(), testutil.NewDoc("mid", "", "c2", domain.StatusPending, now.Add(-24*time.Hour)))
-	repo.Insert(context.Background(), testutil.NewDoc("new", "", "c3", domain.StatusPending, now.Add(-1*time.Hour)))
+	repo.Insert(context.Background(), testutil.NewDoc("old", "", "c1", domain.SummaryPending, now.Add(-48*time.Hour)))
+	repo.Insert(context.Background(), testutil.NewDoc("mid", "", "c2", domain.SummaryPending, now.Add(-24*time.Hour)))
+	repo.Insert(context.Background(), testutil.NewDoc("new", "", "c3", domain.SummaryPending, now.Add(-1*time.Hour)))
 
 	from := now.Add(-36 * time.Hour)
 	to := now.Add(-12 * time.Hour)

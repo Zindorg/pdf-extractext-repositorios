@@ -65,8 +65,8 @@ func insertDoc(t *testing.T, repo *MongoDocumentRepository, doc domain.Document)
 	if doc.CreatedAt.IsZero() {
 		doc.CreatedAt = time.Now().UTC()
 	}
-	if doc.Status == "" {
-		doc.Status = domain.StatusPending
+	if doc.SummaryStatus == "" {
+		doc.SummaryStatus = domain.SummaryPending
 	}
 	require.NoError(t, repo.Insert(context.Background(), doc))
 }
@@ -75,7 +75,7 @@ func insertDoc(t *testing.T, repo *MongoDocumentRepository, doc domain.Document)
 // convenciones de este test: checksum derivado del id. El timestamp se trunca
 // a milisegundos porque Mongo almacena las fechas con esa precisión.
 func integrationDoc(id, filename, status string, created time.Time) domain.Document {
-	return testutil.NewDoc(id, filename, "chk-"+id, domain.Status(status), created.Truncate(time.Millisecond))
+	return testutil.NewDoc(id, filename, "chk-"+id, domain.SummaryStatus(status), created.Truncate(time.Millisecond))
 }
 
 func TestList_Integration_DefaultPaginationExcludesDeleted(t *testing.T) {
@@ -83,7 +83,7 @@ func TestList_Integration_DefaultPaginationExcludesDeleted(t *testing.T) {
 
 	now := time.Now().UTC()
 	insertDoc(t, repo, integrationDoc("doc-1", "a.pdf", "PENDING", now.Add(-3*time.Hour)))
-	insertDoc(t, repo, integrationDoc("doc-2", "b.pdf", "COMPLETED", now.Add(-2*time.Hour)))
+	insertDoc(t, repo, integrationDoc("doc-2", "b.pdf", "RESOLVED", now.Add(-2*time.Hour)))
 	insertDoc(t, repo, integrationDoc("doc-3", "c.pdf", "PENDING", now.Add(-1*time.Hour)))
 
 	deletedAt := now.Add(-30 * time.Minute)
@@ -103,16 +103,16 @@ func TestList_Integration_FilterByStatus(t *testing.T) {
 
 	now := time.Now().UTC()
 	insertDoc(t, repo, integrationDoc("doc-1", "a.pdf", "PENDING", now.Add(-3*time.Hour)))
-	insertDoc(t, repo, integrationDoc("doc-2", "b.pdf", "COMPLETED", now.Add(-2*time.Hour)))
+	insertDoc(t, repo, integrationDoc("doc-2", "b.pdf", "RESOLVED", now.Add(-2*time.Hour)))
 	insertDoc(t, repo, integrationDoc("doc-3", "c.pdf", "PENDING", now.Add(-1*time.Hour)))
 
-	pending := domain.StatusPending
-	docs, total, err := repo.List(context.Background(), domain.ListFilter{Status: &pending}, 1, 20)
+	pending := domain.SummaryPending
+	docs, total, err := repo.List(context.Background(), domain.ListFilter{SummaryStatus: &pending}, 1, 20)
 	require.NoError(t, err)
 	require.Equal(t, int64(2), total)
 	require.Len(t, docs, 2)
 	for _, d := range docs {
-		require.Equal(t, domain.StatusPending, d.Status)
+		require.Equal(t, domain.SummaryPending, d.SummaryStatus)
 	}
 }
 
@@ -190,19 +190,19 @@ func TestList_Integration_CombinedFilters(t *testing.T) {
 
 	now := time.Now().UTC()
 	insertDoc(t, repo, integrationDoc("doc-1", "informe.pdf", "PENDING", now.Add(-48*time.Hour)))
-	insertDoc(t, repo, integrationDoc("doc-2", "informe.pdf", "COMPLETED", now.Add(-24*time.Hour)))
+	insertDoc(t, repo, integrationDoc("doc-2", "informe.pdf", "RESOLVED", now.Add(-24*time.Hour)))
 	insertDoc(t, repo, integrationDoc("doc-3", "factura.pdf", "PENDING", now.Add(-12*time.Hour)))
 
-	pending := domain.StatusPending
+	pending := domain.SummaryPending
 	from := now.Add(-36 * time.Hour)
 	to := now.Add(-6 * time.Hour)
 	fn := "informe"
 
 	docs, total, err := repo.List(context.Background(), domain.ListFilter{
-		Status:      &pending,
-		Filename:    &fn,
-		CreatedFrom: &from,
-		CreatedTo:   &to,
+		SummaryStatus: &pending,
+		Filename:      &fn,
+		CreatedFrom:   &from,
+		CreatedTo:     &to,
 	}, 1, 20)
 	require.NoError(t, err)
 	require.Equal(t, int64(0), total) // doc-1 fuera de rango, doc-2 completed, doc-3 otro filename

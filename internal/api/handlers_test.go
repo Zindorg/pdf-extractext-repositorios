@@ -30,13 +30,14 @@ func seedPending(t *testing.T, svc *application.DocumentService, id, checksum, t
 	t.Helper()
 	_, err := svc.CreatePending(context.Background(), domain.Document{
 		DocumentID: id, Checksum: checksum, ExtractedText: text,
+		SummaryStatus:    domain.SummaryPending,
 		Metadata:         domain.Metadata{Filename: "mi archivo.pdf", MimeType: "application/pdf"},
 		ExtractionTimeMS: 342,
 	})
 	require.NoError(t, err)
 }
 
-// seedCompleted inserta un documento COMPLETED vía el servicio.
+// seedCompleted inserta un documento con el resumen resuelto vía el servicio.
 func seedCompleted(t *testing.T, svc *application.DocumentService, id, checksum, text, summary string) {
 	t.Helper()
 	seedPending(t, svc, id, checksum, text)
@@ -63,7 +64,7 @@ func TestHandler_GetByDocumentID_OK(t *testing.T) {
 	require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &got))
 	require.Equal(t, "doc-1", got.DocumentID)
 	require.Equal(t, "chk-1", got.Checksum)
-	require.Equal(t, string(domain.StatusCompleted), got.Status)
+	require.Equal(t, string(domain.SummaryResolved), got.SummaryStatus)
 	require.Equal(t, "texto extraido", got.ExtractedText)
 	require.Equal(t, "resumen", *got.Summary)
 	require.Equal(t, int64(462), got.ProcessingTimeMS)
@@ -122,13 +123,13 @@ func TestHandler_List_OK_PaginationAndFilters(t *testing.T) {
 	require.Equal(t, 1, all.Page)
 	require.Equal(t, 20, all.PageSize)
 
-	rr = doGet(t, router, "/api/v1/documents?status=COMPLETED")
+	rr = doGet(t, router, "/api/v1/documents?status=RESOLVED")
 	require.Equal(t, http.StatusOK, rr.Code)
-	var completed api.ListResponse
-	require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &completed))
-	require.Len(t, completed.Items, 1)
-	require.Equal(t, "doc-1", completed.Items[0].DocumentID)
-	require.Equal(t, int64(1), completed.Total)
+	var resolved api.ListResponse
+	require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &resolved))
+	require.Len(t, resolved.Items, 1)
+	require.Equal(t, "doc-1", resolved.Items[0].DocumentID)
+	require.Equal(t, int64(1), resolved.Total)
 
 	rr = doGet(t, router, "/api/v1/documents?page=2&page_size=1")
 	require.Equal(t, http.StatusOK, rr.Code)

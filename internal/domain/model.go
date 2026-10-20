@@ -2,13 +2,6 @@ package domain
 
 import "time"
 
-type Status string
-
-const (
-	StatusPending   Status = "PENDING"
-	StatusCompleted Status = "COMPLETED"
-)
-
 // SummaryStatus es el eje público del estado de resumen (openapi SummaryStatus):
 // lo decide el Orquestador y el Persistidor lo conserva tal como el contrato
 // lo define. delivery_status no se persiste: un documento existente ya es
@@ -32,7 +25,6 @@ type Metadata struct {
 type Document struct {
 	DocumentID       string        `json:"document_id"` // UUID — clave de negocio
 	Checksum         string        `json:"checksum"`    // sha256(extracted_text)
-	Status           Status        `json:"status"`
 	SummaryStatus    SummaryStatus `json:"summary_status"`
 	ExtractedText    string        `json:"extracted_text"`
 	Summary          *string       `json:"summary"` // null mientras PENDING
@@ -48,10 +40,6 @@ type Document struct {
 // tiempo que muta el servicio (created_at, updated_at) salen de este reloj:
 // service, adaptadores y fakes de test lo comparten.
 func Now() time.Time { return time.Now().UTC() }
-
-func (d Document) IsCompleted() bool {
-	return d.Status == StatusCompleted
-}
 
 // HasSummary es la guarda de idempotencia del resumen: la presencia del texto
 // manda, no el estado declarado por el orquestador.

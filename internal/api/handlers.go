@@ -90,7 +90,7 @@ func (h *DocumentHandler) DownloadSummary(c *gin.Context) {
 		abortWithError(c, err)
 		return
 	}
-	if !doc.IsCompleted() {
+	if !doc.HasSummary() {
 		abortWithError(c, domain.ErrSummaryPending)
 		return
 	}
@@ -154,7 +154,7 @@ func listResponse(items []domain.Document, total int64, page, pageSize int) List
 func parseListFilter(c *gin.Context) (domain.ListFilter, error) {
 	filter := domain.ListFilter{}
 	var err error
-	if filter.Status, err = parseStatus(c.Query("status")); err != nil {
+	if filter.SummaryStatus, err = parseStatus(c.Query("status")); err != nil {
 		return filter, err
 	}
 	if s := c.Query("filename"); s != "" {
@@ -170,13 +170,12 @@ func parseListFilter(c *gin.Context) (domain.ListFilter, error) {
 	return filter, nil
 }
 
-func parseStatus(raw string) (*domain.Status, error) {
+func parseStatus(raw string) (*domain.SummaryStatus, error) {
 	if raw == "" {
 		return nil, nil
 	}
-	switch domain.Status(raw) {
-	case domain.StatusPending, domain.StatusCompleted:
-		s := domain.Status(raw)
+	switch s := domain.SummaryStatus(raw); s {
+	case domain.SummaryNotRequested, domain.SummaryPending, domain.SummaryResolved, domain.SummaryFailed:
 		return &s, nil
 	default:
 		return nil, fmt.Errorf("invalid status")

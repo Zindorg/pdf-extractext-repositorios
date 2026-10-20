@@ -14,7 +14,7 @@ import (
 const collectionName = "documents"
 
 // MongoDocumentRepository implementa el puerto del dominio sobre MongoDB.
-// Insert, UpdateStatus, Find*, List, SoftDelete y Restore están implementados.
+// Insert, Complete, Find*, List, SoftDelete y Restore están implementados.
 type MongoDocumentRepository struct {
 	collection *mongo.Collection
 }
@@ -51,10 +51,10 @@ func mapInsertError(err error) error {
 	}
 }
 
-func (r *MongoDocumentRepository) UpdateStatus(ctx context.Context, documentID string, status domain.Status, summary *string, summaryTimeMS int64) (*domain.Document, error) {
+func (r *MongoDocumentRepository) Complete(ctx context.Context, documentID string, summary string, summaryTimeMS int64) (*domain.Document, error) {
 	filter := bson.M{"document_id": documentID}
 	update := bson.M{"$set": bson.M{
-		"status":          string(status),
+		"summary_status":  string(domain.SummaryResolved),
 		"summary":         summary,
 		"summary_time_ms": summaryTimeMS,
 		"updated_at":      domain.Now(),
@@ -149,8 +149,8 @@ func buildMongoFilter(f domain.ListFilter) bson.M {
 	if !f.IncludeDeleted {
 		m["deleted_at"] = bson.M{"$exists": false}
 	}
-	if f.Status != nil {
-		m["status"] = *f.Status
+	if f.SummaryStatus != nil {
+		m["summary_status"] = *f.SummaryStatus
 	}
 	if f.Filename != nil {
 		m["metadata.filename"] = bson.M{

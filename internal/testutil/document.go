@@ -10,11 +10,11 @@ import (
 )
 
 // NewDoc crea un documento PDF válido mínimo para tests.
-func NewDoc(id, filename, checksum string, status domain.Status, created time.Time) domain.Document {
+func NewDoc(id, filename, checksum string, status domain.SummaryStatus, created time.Time) domain.Document {
 	return domain.Document{
 		DocumentID:    id,
 		Checksum:      checksum,
-		Status:        status,
+		SummaryStatus: status,
 		ExtractedText: "contenido",
 		Metadata: domain.Metadata{
 			Filename:  filename,

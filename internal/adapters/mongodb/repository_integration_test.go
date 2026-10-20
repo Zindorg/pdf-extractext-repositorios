@@ -21,7 +21,7 @@ func TestRepository_Integration_InsertAndFindByDocumentID(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, doc.DocumentID, got.DocumentID)
 	require.Equal(t, doc.Checksum, got.Checksum)
-	require.Equal(t, doc.Status, got.Status)
+	require.Equal(t, doc.SummaryStatus, got.SummaryStatus)
 	require.Equal(t, doc.ExtractedText, got.ExtractedText)
 	require.Nil(t, got.Summary)
 	require.Equal(t, doc.Metadata, got.Metadata)
@@ -49,31 +49,31 @@ func TestRepository_Integration_FindByChecksum(t *testing.T) {
 	require.Equal(t, domain.ErrNotFound, err)
 }
 
-func TestRepository_Integration_UpdateStatus(t *testing.T) {
+func TestRepository_Integration_Complete(t *testing.T) {
 	repo := newIntegrationRepo(t)
 
 	created := time.Now().UTC()
 	insertDoc(t, repo, integrationDoc("doc-1", "a.pdf", "PENDING", created))
 
 	summary := "resumen"
-	got, err := repo.UpdateStatus(context.Background(), "doc-1", domain.StatusCompleted, &summary, 120)
+	got, err := repo.Complete(context.Background(), "doc-1", summary, 120)
 	require.NoError(t, err)
-	require.Equal(t, domain.StatusCompleted, got.Status)
+	require.Equal(t, domain.SummaryResolved, got.SummaryStatus)
 	require.Equal(t, &summary, got.Summary)
 	require.Equal(t, int64(120), got.SummaryTimeMS)
 	require.False(t, got.UpdatedAt.Before(created))
 
 	persisted, err := repo.FindByDocumentID(context.Background(), "doc-1")
 	require.NoError(t, err)
-	require.Equal(t, domain.StatusCompleted, persisted.Status)
+	require.Equal(t, domain.SummaryResolved, persisted.SummaryStatus)
 	require.Equal(t, &summary, persisted.Summary)
 	require.Equal(t, int64(120), persisted.SummaryTimeMS)
 }
 
-func TestRepository_Integration_UpdateStatus_NotFound(t *testing.T) {
+func TestRepository_Integration_Complete_NotFound(t *testing.T) {
 	repo := newIntegrationRepo(t)
 
-	_, err := repo.UpdateStatus(context.Background(), "missing", domain.StatusCompleted, nil, 0)
+	_, err := repo.Complete(context.Background(), "missing", "resumen", 0)
 
 	require.Equal(t, domain.ErrNotFound, err)
 }

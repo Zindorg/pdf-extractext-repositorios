@@ -18,7 +18,7 @@ type persistedDocument struct {
 	ID               bson.ObjectID `bson:"_id"`
 	DocumentID       string        `bson:"document_id"`
 	Checksum         string        `bson:"checksum"`
-	Status           string        `bson:"status"`
+	SummaryStatus    string        `bson:"summary_status"`
 	ExtractedText    string        `bson:"extracted_text"`
 	Summary          *string       `bson:"summary"`
 	Metadata         metadataBSON  `bson:"metadata"`
@@ -33,7 +33,7 @@ func toPersisted(doc domain.Document) persistedDocument {
 	return persistedDocument{
 		DocumentID:       doc.DocumentID,
 		Checksum:         doc.Checksum,
-		Status:           string(doc.Status),
+		SummaryStatus:    string(doc.SummaryStatus),
 		ExtractedText:    doc.ExtractedText,
 		Summary:          doc.Summary,
 		Metadata:         metadataBSON(doc.Metadata),
@@ -49,7 +49,7 @@ func toDomain(p persistedDocument) domain.Document {
 	return domain.Document{
 		DocumentID:       p.DocumentID,
 		Checksum:         p.Checksum,
-		Status:           domain.Status(p.Status),
+		SummaryStatus:    domain.SummaryStatus(p.SummaryStatus),
 		ExtractedText:    p.ExtractedText,
 		Summary:          p.Summary,
 		Metadata:         domain.Metadata(p.Metadata),

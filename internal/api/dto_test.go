@@ -14,7 +14,6 @@ func TestToResponse(t *testing.T) {
 	doc := domain.Document{
 		DocumentID:       "doc-1",
 		Checksum:         "abc",
-		Status:           domain.StatusCompleted,
 		SummaryStatus:    domain.SummaryResolved,
 		ExtractedText:    "texto",
 		Summary:          &summary,
