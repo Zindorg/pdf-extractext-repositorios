@@ -110,10 +110,10 @@ func documentStatus(t *testing.T, client *http.Client, url string) (string, bool
 		return "", false
 	}
 	var doc struct {
-		Status string `json:"status"`
+		SummaryStatus string `json:"summary_status"`
 	}
 	require.NoError(t, json.NewDecoder(resp.Body).Decode(&doc))
-	return doc.Status, true
+	return doc.SummaryStatus, true
 }
 
 // waitForStatus reintenta el GET hasta que el documento responde con el
@@ -153,14 +153,16 @@ func TestE2E_Flow_OriginalThenSummaryThenOperations(t *testing.T) {
 
 	// 2. Publish original
 	original := map[string]any{
-		"event_type":        "original",
-		"schema_version":    1,
-		"document_id":       docID,
-		"checksum":          checksum,
-		"extracted_text":    "texto extraido",
+		"event_type":         "original",
+		"schema_version":     1,
+		"document_id":        docID,
+		"checksum":           checksum,
+		"extracted_text":     "texto extraido",
 		"extraction_time_ms": 342,
-		"mime_type":         "application/pdf",
-		"metadata":          map[string]any{"filename": "test.pdf", "size_bytes": 10, "page_count": 1},
+		"mime_type":          "application/pdf",
+		"summary_requested":  true,
+		"filename":           "informe-e2e.pdf",
+		"metadata":           map[string]any{"filename": "test.pdf", "size_bytes": 10, "page_count": 1},
 	}
 	publishEvent(t, redisCli, stream, original)
 	waitForStatus(t, client, srv.URL+"/api/v1/documents/"+docID, "PENDING")
@@ -172,7 +174,8 @@ func TestE2E_Flow_OriginalThenSummaryThenOperations(t *testing.T) {
 	var got map[string]any
 	require.NoError(t, json.NewDecoder(resp.Body).Decode(&got))
 	resp.Body.Close()
-	require.Equal(t, "PENDING", got["status"].(string))
+	require.Equal(t, "PENDING", got["summary_status"])
+	require.Equal(t, "informe-e2e.pdf", got["metadata"].(map[string]any)["filename"])
 
 	// 4. GET by checksum
 	resp, err = client.Get(srv.URL + "/api/v1/documents/checksum/" + checksum)
@@ -200,14 +203,14 @@ func TestE2E_Flow_OriginalThenSummaryThenOperations(t *testing.T) {
 
 	// 7. Publish summary_resolved
 	summary := map[string]any{
-		"event_type":     "summary_resolved",
-		"schema_version": 1,
-		"document_id":    docID,
-		"summary":        "resumen",
+		"event_type":      "summary_resolved",
+		"schema_version":  1,
+		"document_id":     docID,
+		"summary":         "resumen",
 		"summary_time_ms": 120,
 	}
 	publishEvent(t, redisCli, stream, summary)
-	waitForStatus(t, client, srv.URL+"/api/v1/documents/"+docID, "COMPLETED")
+	waitForStatus(t, client, srv.URL+"/api/v1/documents/"+docID, "RESOLVED")
 
 	// 8. GET by id - completed with processing time
 	resp, err = client.Get(srv.URL + "/api/v1/documents/" + docID)
@@ -215,7 +218,7 @@ func TestE2E_Flow_OriginalThenSummaryThenOperations(t *testing.T) {
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	require.NoError(t, json.NewDecoder(resp.Body).Decode(&got))
 	resp.Body.Close()
-	require.Equal(t, "COMPLETED", got["status"].(string))
+	require.Equal(t, "RESOLVED", got["summary_status"])
 	require.NotNil(t, got["summary"])
 	require.Equal(t, float64(462), got["processing_time_ms"].(float64)) // 342+120
 

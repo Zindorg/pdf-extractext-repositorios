@@ -91,6 +91,9 @@ const integOriginal = `{
 	"extracted_text": "texto",
 	"extraction_time_ms": 342,
 	"mime_type": "application/pdf",
+	"summary_requested": true,
+	"summary_status": "RESOLVED",
+	"filename": "informe.pdf",
 	"metadata": {"filename": "x.pdf"}
 }`
 
@@ -102,9 +105,10 @@ func TestConsumer_Integration_Original_CreatesPendingAndAcks(t *testing.T) {
 
 	doc, err := repo.FindByDocumentID(context.Background(), "doc-1")
 	require.NoError(t, err)
-	require.Equal(t, domain.StatusPending, doc.Status)
+	require.Equal(t, domain.SummaryPending, doc.SummaryStatus)
 	require.Equal(t, int64(342), doc.ExtractionTimeMS)
 	require.Equal(t, "application/pdf", doc.Metadata.MimeType)
+	require.Equal(t, "informe.pdf", doc.Metadata.Filename)
 	require.Zero(t, pendingLen(t, client, consumer))
 }
 
@@ -136,7 +140,7 @@ func TestConsumer_Integration_SummaryResolved_Completes(t *testing.T) {
 
 	doc, err := repo.FindByDocumentID(context.Background(), "doc-1")
 	require.NoError(t, err)
-	require.Equal(t, domain.StatusCompleted, doc.Status)
+	require.Equal(t, domain.SummaryResolved, doc.SummaryStatus)
 	require.Equal(t, "resumen", *doc.Summary)
 	require.Equal(t, int64(120), doc.SummaryTimeMS)
 	require.Zero(t, pendingLen(t, client, consumer))

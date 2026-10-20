@@ -2,6 +2,7 @@ package redis
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	"github.com/marco/pdf-extractext-repositorios/internal/application"
@@ -23,17 +24,64 @@ func TestOnOriginal_CreatesPendingDocument(t *testing.T) {
 		EventType: eventOriginal, Event: eventOriginal, SchemaVersion: 1,
 		DocumentID: "doc-1", Checksum: "chk-1", ExtractedText: "texto",
 		ExtractionTimeMS: 342, MimeType: "application/pdf",
-		Metadata: domain.Metadata{Filename: "x.pdf"},
+		SummaryRequested: true,
+		Filename:         "informe.pdf",
+		Metadata:         domain.Metadata{Filename: "x.pdf"},
 	})
 	require.NoError(t, err)
 
 	doc, err := repo.FindByDocumentID(context.Background(), "doc-1")
 	require.NoError(t, err)
-	require.Equal(t, domain.StatusPending, doc.Status)
+	require.Equal(t, domain.SummaryPending, doc.SummaryStatus)
 	require.Equal(t, "chk-1", doc.Checksum)
 	require.Equal(t, "texto", doc.ExtractedText)
 	require.Equal(t, int64(342), doc.ExtractionTimeMS)
 	require.Equal(t, "application/pdf", doc.Metadata.MimeType)
+	require.Equal(t, "informe.pdf", doc.Metadata.Filename)
+}
+
+func TestOnOriginal_NormalizesSummaryStatus(t *testing.T) {
+	cases := []struct {
+		name      string
+		requested bool
+		declared  string
+		want      domain.SummaryStatus
+	}{
+		{"pedido, pendiente", true, "PENDING", domain.SummaryPending},
+		{"pedido, resuelto en el original", true, "RESOLVED", domain.SummaryPending},
+		{"pedido, sin estado declarado", true, "", domain.SummaryPending},
+		{"no pedido", false, "NOT_REQUESTED", domain.SummaryNotRequested},
+		{"fallido", true, "FAILED", domain.SummaryFailed},
+	}
+
+	for i, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			h, repo := newHandler()
+			id := fmt.Sprintf("doc-%d", i)
+			require.NoError(t, h.OnOriginal(context.Background(), &OriginalEvent{
+				EventType: eventOriginal, SchemaVersion: 1,
+				DocumentID: id, Checksum: "chk-" + id, ExtractedText: "texto",
+				SummaryRequested: tc.requested, SummaryStatus: tc.declared,
+			}))
+
+			doc, err := repo.FindByDocumentID(context.Background(), id)
+			require.NoError(t, err)
+			require.Equal(t, tc.want, doc.SummaryStatus)
+		})
+	}
+}
+
+func TestOnOriginal_FilenameFallsBackToMetadata(t *testing.T) {
+	h, repo := newHandler()
+
+	require.NoError(t, h.OnOriginal(context.Background(), &OriginalEvent{
+		EventType: eventOriginal, SchemaVersion: 1,
+		DocumentID: "doc-1", Checksum: "chk-1", ExtractedText: "texto",
+		Metadata: domain.Metadata{Filename: "x.pdf"},
+	}))
+
+	doc, err := repo.FindByDocumentID(context.Background(), "doc-1")
+	require.NoError(t, err)
 	require.Equal(t, "x.pdf", doc.Metadata.Filename)
 }
 
@@ -79,7 +127,7 @@ func TestOnSummaryResolved_CompletesDocument(t *testing.T) {
 
 	doc, err := repo.FindByDocumentID(context.Background(), "doc-1")
 	require.NoError(t, err)
-	require.Equal(t, domain.StatusCompleted, doc.Status)
+	require.Equal(t, domain.SummaryResolved, doc.SummaryStatus)
 	require.Equal(t, "resumen", *doc.Summary)
 	require.Equal(t, int64(120), doc.SummaryTimeMS)
 	require.True(t, doc.UpdatedAt.After(doc.CreatedAt))

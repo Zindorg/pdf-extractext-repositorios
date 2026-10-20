@@ -16,6 +16,7 @@ func TestPersistedRoundTrip(t *testing.T) {
 		DocumentID:       "doc-1",
 		Checksum:         "abc",
 		Status:           domain.StatusCompleted,
+		SummaryStatus:    domain.SummaryResolved,
 		ExtractedText:    "texto",
 		Summary:          &summary,
 		Metadata:         domain.Metadata{Filename: "x.pdf", MimeType: "application/pdf", SizeBytes: 10, PageCount: 2},
@@ -31,6 +32,7 @@ func TestPersistedRoundTrip(t *testing.T) {
 	require.Equal(t, doc.DocumentID, got.DocumentID)
 	require.Equal(t, doc.Checksum, got.Checksum)
 	require.Equal(t, doc.Status, got.Status)
+	require.Equal(t, doc.SummaryStatus, got.SummaryStatus)
 	require.Equal(t, doc.ExtractedText, got.ExtractedText)
 	require.Equal(t, doc.Summary, got.Summary)
 	require.Equal(t, doc.Metadata, got.Metadata)
@@ -47,5 +49,6 @@ func TestPersistedRoundTrip_NoSummaryNoDeletedAt(t *testing.T) {
 	require.Equal(t, "doc-2", got.DocumentID)
 	require.Nil(t, got.Summary)
 	require.Nil(t, got.DeletedAt)
+	require.Equal(t, domain.SummaryStatus(""), got.SummaryStatus)
 	require.Equal(t, domain.Status(""), got.Status)
 }

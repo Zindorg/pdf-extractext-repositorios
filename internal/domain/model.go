@@ -9,6 +9,19 @@ const (
 	StatusCompleted Status = "COMPLETED"
 )
 
+// SummaryStatus es el eje público del estado de resumen (openapi SummaryStatus):
+// lo decide el Orquestador y el Persistidor lo conserva tal como el contrato
+// lo define. delivery_status no se persiste: un documento existente ya es
+// AVAILABLE.
+type SummaryStatus string
+
+const (
+	SummaryNotRequested SummaryStatus = "NOT_REQUESTED"
+	SummaryPending      SummaryStatus = "PENDING"
+	SummaryResolved     SummaryStatus = "RESOLVED"
+	SummaryFailed       SummaryStatus = "FAILED"
+)
+
 type Metadata struct {
 	Filename  string `json:"filename"`
 	MimeType  string `json:"mime_type"`
@@ -17,17 +30,18 @@ type Metadata struct {
 }
 
 type Document struct {
-	DocumentID       string     `json:"document_id"` // UUID — clave de negocio
-	Checksum         string     `json:"checksum"`    // sha256(extracted_text)
-	Status           Status     `json:"status"`
-	ExtractedText    string     `json:"extracted_text"`
-	Summary          *string    `json:"summary"` // null mientras PENDING
-	Metadata         Metadata   `json:"metadata"`
-	ExtractionTimeMS int64      `json:"extraction_time_ms"`
-	SummaryTimeMS    int64      `json:"summary_time_ms"`
-	CreatedAt        time.Time  `json:"created_at"`
-	UpdatedAt        time.Time  `json:"updated_at"`
-	DeletedAt        *time.Time `json:"deleted_at"` // soft-delete
+	DocumentID       string        `json:"document_id"` // UUID — clave de negocio
+	Checksum         string        `json:"checksum"`    // sha256(extracted_text)
+	Status           Status        `json:"status"`
+	SummaryStatus    SummaryStatus `json:"summary_status"`
+	ExtractedText    string        `json:"extracted_text"`
+	Summary          *string       `json:"summary"` // null mientras PENDING
+	Metadata         Metadata      `json:"metadata"`
+	ExtractionTimeMS int64         `json:"extraction_time_ms"`
+	SummaryTimeMS    int64         `json:"summary_time_ms"`
+	CreatedAt        time.Time     `json:"created_at"`
+	UpdatedAt        time.Time     `json:"updated_at"`
+	DeletedAt        *time.Time    `json:"deleted_at"` // soft-delete
 }
 
 // Now devuelve la hora canónica del servicio (UTC). Todas las marcas de
@@ -37,6 +51,12 @@ func Now() time.Time { return time.Now().UTC() }
 
 func (d Document) IsCompleted() bool {
 	return d.Status == StatusCompleted
+}
+
+// HasSummary es la guarda de idempotencia del resumen: la presencia del texto
+// manda, no el estado declarado por el orquestador.
+func (d Document) HasSummary() bool {
+	return d.Summary != nil
 }
 
 func (d Document) IsDeleted() bool {

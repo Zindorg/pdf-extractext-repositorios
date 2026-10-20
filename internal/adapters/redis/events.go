@@ -23,6 +23,7 @@ type OriginalEvent struct {
 	Event            string          `json:"event"`
 	SchemaVersion    int             `json:"schema_version"`
 	DocumentID       string          `json:"document_id"`
+	Filename         string          `json:"filename"`
 	Checksum         string          `json:"checksum"`
 	ExtractedText    string          `json:"extracted_text"`
 	ExtractionTimeMS int64           `json:"extraction_time_ms"`

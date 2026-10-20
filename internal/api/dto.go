@@ -12,6 +12,7 @@ type DocumentResponse struct {
 	DocumentID       string          `json:"document_id"`
 	Checksum         string          `json:"checksum"`
 	Status           string          `json:"status"`
+	SummaryStatus    string          `json:"summary_status"`
 	ExtractedText    string          `json:"extracted_text"`
 	Summary          *string         `json:"summary"`
 	Metadata         domain.Metadata `json:"metadata"`

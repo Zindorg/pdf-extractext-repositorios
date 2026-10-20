@@ -176,7 +176,7 @@ func TestCompleteWithSummary_CompletesPendingDocument(t *testing.T) {
 	got, err := svc.CompleteWithSummary(context.Background(), "doc-1", "resumen del doc", 120)
 	require.NoError(t, err)
 	require.NotNil(t, got)
-	require.Equal(t, domain.StatusCompleted, got.Status)
+	require.Equal(t, domain.SummaryResolved, got.SummaryStatus)
 	require.NotNil(t, got.Summary)
 	require.Equal(t, "resumen del doc", *got.Summary)
 	require.Equal(t, int64(120), got.SummaryTimeMS)
@@ -207,7 +207,7 @@ func TestCompleteWithSummary_AlreadyCompleted_IsBenign(t *testing.T) {
 
 	stored, err := repo.FindByDocumentID(context.Background(), "doc-1")
 	require.NoError(t, err)
-	require.Equal(t, domain.StatusCompleted, stored.Status)
+	require.Equal(t, domain.SummaryResolved, stored.SummaryStatus)
 	require.Equal(t, "primera vez", *stored.Summary)
 	require.Equal(t, int64(120), stored.SummaryTimeMS)
 }

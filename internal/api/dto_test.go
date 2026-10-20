@@ -15,6 +15,7 @@ func TestToResponse(t *testing.T) {
 		DocumentID:       "doc-1",
 		Checksum:         "abc",
 		Status:           domain.StatusCompleted,
+		SummaryStatus:    domain.SummaryResolved,
 		ExtractedText:    "texto",
 		Summary:          &summary,
 		Metadata:         domain.Metadata{Filename: "x.pdf", MimeType: "application/pdf", SizeBytes: 10, PageCount: 2},
@@ -28,7 +29,7 @@ func TestToResponse(t *testing.T) {
 
 	require.Equal(t, "doc-1", got.DocumentID)
 	require.Equal(t, "abc", got.Checksum)
-	require.Equal(t, "COMPLETED", got.Status)
+	require.Equal(t, "RESOLVED", got.SummaryStatus)
 	require.Equal(t, "texto", got.ExtractedText)
 	require.Equal(t, &summary, got.Summary)
 	require.Equal(t, doc.Metadata, got.Metadata)
@@ -42,5 +43,5 @@ func TestToResponse_NilSummary(t *testing.T) {
 	got := toResponse(domain.Document{})
 
 	require.Nil(t, got.Summary)
-	require.Equal(t, "", got.Status)
+	require.Equal(t, "", got.SummaryStatus)
 }
