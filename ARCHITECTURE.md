@@ -348,7 +348,7 @@ Envelope de error consistente: `{"code": "...", "message": "...", "details": {..
 - **Config**: env vars con defaults (`HTTP_PORT`, `MONGODB_URI`, `MONGODB_DATABASE`, `REDIS_ADDR`, `STREAM_NAME`, `STREAM_GROUP`, `DLQ_NAME`, `RETRY_MAX`, `RETRY_BACKOFF`, `MAX_TEXT_BYTES`, `LOG_LEVEL`) — 12-factor.
 - **Errores**: errores de dominio → HTTP (`404/409/500`) vía mapeo central en `internal/api/errors.go`.
 - **Observabilidad**: logger de acceso (Gin), `/health` con ping a Mongo y Redis (consumido por el Orquestador para detectar disponibilidad). Middleware de request-ID (`X-Request-ID`): implementado; propaga el header si viene, no lo genera.
-- **Seguridad**: sin auth en MVP (red interna) — extensible con middleware de API key/JWT. `MAX_TEXT_BYTES` está reservado en config; el límite de tamaño de cuerpo aún no se aplica.
+- **Seguridad**: sin auth en MVP (red interna) — extensible con middleware de API key/JWT. `MAX_TEXT_BYTES` limita `extracted_text` en la ingesta (por encima ⇒ retry → DLQ); el default `15 << 20` queda por debajo del límite de 16 MiB por documento de MongoDB.
 - **Validación**: en DTOs y eventos (binding + validator) para los bordes; reglas de negocio en el servicio.
 
 ---

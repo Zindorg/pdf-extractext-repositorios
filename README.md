@@ -63,8 +63,13 @@ Composes individuales: `make compose-mongo`, `make compose-redis`, `make compose
 | `DLQ_NAME`          | `document-events-dlq`                           | Dead-letter queue              |
 | `RETRY_MAX`         | `5`                                             | Intentos antes de DLQ          |
 | `RETRY_BACKOFF`     | `5s`                                            | Retraso base entre reintentos  |
-| `MAX_TEXT_BYTES`    | `52428800` (50 MB)                              | Límite del texto extraído      |
+| `MAX_TEXT_BYTES`    | `15728640` (15 MiB)                             | Límite del texto extraído      |
 | `LOG_LEVEL`         | `info`                                          | Nivel de log                   |
+
+> El tope está por debajo del límite de 16 MiB por documento de MongoDB: el
+> texto extraído se persiste entero en un solo documento, así que un evento
+> por encima de `MAX_TEXT_BYTES` se rechaza en la ingesta (retry → DLQ) en
+> lugar de fallar en la escritura.
 
 ## API interna
 

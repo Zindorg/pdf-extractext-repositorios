@@ -17,7 +17,7 @@ const (
 	defaultDLQName         = "document-events-dlq"
 	defaultRetryMax        = 5
 	defaultRetryBackoff    = 5 * time.Second
-	defaultMaxTextBytes    = 50 << 20
+	defaultMaxTextBytes    = 15 << 20
 	defaultLogLevel        = "info"
 )
 

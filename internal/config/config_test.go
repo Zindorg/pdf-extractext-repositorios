@@ -32,7 +32,7 @@ func TestLoadWithDefaults(t *testing.T) {
 	require.Equal(t, "document-events-dlq", cfg.DLQName)
 	require.Equal(t, 5, cfg.RetryMax)
 	require.Equal(t, 5*time.Second, cfg.RetryBackoff)
-	require.Equal(t, int64(50<<20), cfg.MaxTextBytes)
+	require.Equal(t, int64(15<<20), cfg.MaxTextBytes)
 	require.Equal(t, "info", cfg.LogLevel)
 }
 
