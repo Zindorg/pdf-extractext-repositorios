@@ -21,7 +21,7 @@ var (
 )
 
 const (
-	streamPayloadField = "event"
+	streamPayloadField = "payload"
 	consumeBatch       = 10
 	consumeBlock       = time.Second
 	consumerName       = "persister"
