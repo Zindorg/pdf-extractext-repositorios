@@ -67,7 +67,7 @@ func setupE2E(t *testing.T) (*httptest.Server, *redis.Client, *mongo.Client, str
 
 	service := application.NewDocumentService(repo)
 	retry := redisadapter.NewRetryDLQ(cfg.RetryMax, cfg.RetryBackoff)
-	consumer, err := redisadapter.NewStreamConsumer(redisCli, cfg.StreamName, cfg.StreamGroup, cfg.DLQName, service, retry)
+	consumer, err := redisadapter.NewStreamConsumer(redisCli, cfg.StreamName, cfg.StreamGroup, cfg.DLQName, service, retry, cfg.MaxTextBytes)
 	require.NoError(t, err)
 	ctx, cancel := context.WithCancel(context.Background())
 	go func() {

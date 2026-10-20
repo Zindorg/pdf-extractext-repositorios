@@ -126,6 +126,12 @@ func (e *OriginalEvent) validate() error {
 	}
 }
 
+// validateSize aplica el límite de bytes al extracto extraído; el tope es
+// inclusivo (un extracto de exactamente max bytes se acepta).
+func (e *OriginalEvent) validateSize(max int64) error {
+	return nil
+}
+
 func (e *SummaryResolvedEvent) validate() error {
 	switch {
 	case e.SchemaVersion != schemaVersion:

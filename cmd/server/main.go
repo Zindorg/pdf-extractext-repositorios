@@ -141,7 +141,7 @@ func serveHTTP(rootCtx context.Context, cfg *config.Config, inf *infra) error {
 func startConsumer(ctx context.Context, cfg *config.Config, inf *infra, service *application.DocumentService) error {
 	retry := redisadapter.NewRetryDLQ(cfg.RetryMax, cfg.RetryBackoff)
 	consumer, err := redisadapter.NewStreamConsumer(
-		inf.redis, cfg.StreamName, cfg.StreamGroup, cfg.DLQName, service, retry,
+		inf.redis, cfg.StreamName, cfg.StreamGroup, cfg.DLQName, service, retry, cfg.MaxTextBytes,
 	)
 	if err != nil {
 		return fmt.Errorf("redis consumer: %w", err)

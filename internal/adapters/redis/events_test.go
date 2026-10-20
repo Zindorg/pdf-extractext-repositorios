@@ -3,6 +3,7 @@ package redis
 import (
 	"testing"
 
+	"github.com/marco/pdf-extractext-repositorios/internal/domain"
 	"github.com/stretchr/testify/require"
 )
 
@@ -93,6 +94,32 @@ func TestParseOriginal_InvalidJSON(t *testing.T) {
 	_, err := parseOriginal("{no válido")
 
 	require.Error(t, err)
+}
+
+func TestOriginalEvent_ValidateSize(t *testing.T) {
+	cases := []struct {
+		name    string
+		text    string
+		max     int64
+		wantErr bool
+	}{
+		{"debajo del límite", "hola", 5, false},
+		{"justo en el límite", "hello", 5, false},
+		{`un byte sobre el límite`, "hello", 4, true},
+		{"límite amplio", "hello", 100, false},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			ev := &OriginalEvent{ExtractedText: tc.text}
+			err := ev.validateSize(tc.max)
+			if tc.wantErr {
+				require.ErrorIs(t, err, domain.ErrTextTooLarge)
+			} else {
+				require.NoError(t, err)
+			}
+		})
+	}
 }
 
 func TestParseSummaryResolved(t *testing.T) {

@@ -16,9 +16,13 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// integMaxText es un límite holgado para los tests que no ejercitan
+// MAX_TEXT_BYTES; el test del tope usa uno pequeño a propósito.
+const integMaxText = 1 << 20
+
 // newIntegrationConsumer arranca un consumer sobre Redis real, con streams
 // únicos por test para no colisionar entre ejecuciones.
-func newIntegrationConsumer(t *testing.T, retryMax int, backoff time.Duration) (*StreamConsumer, *redis.Client, *testutil.MemoryRepository) {
+func newIntegrationConsumer(t *testing.T, retryMax int, backoff time.Duration, maxTextBytes int64) (*StreamConsumer, *redis.Client, *testutil.MemoryRepository) {
 	t.Helper()
 	addr := os.Getenv("REDIS_ADDR")
 	if addr == "" {
@@ -39,7 +43,7 @@ func newIntegrationConsumer(t *testing.T, retryMax int, backoff time.Duration) (
 	stream := fmt.Sprintf("it-events-%d", suffix)
 	group := fmt.Sprintf("it-group-%d", suffix)
 	dlq := fmt.Sprintf("it-dlq-%d", suffix)
-	consumer, err := NewStreamConsumer(client, stream, group, dlq, service, NewRetryDLQ(retryMax, backoff))
+	consumer, err := NewStreamConsumer(client, stream, group, dlq, service, NewRetryDLQ(retryMax, backoff), maxTextBytes)
 	require.NoError(t, err)
 	require.NoError(t, consumer.ensureGroup(context.Background()))
 	return consumer, client, repo
@@ -75,7 +79,7 @@ const integOriginal = `{
 }`
 
 func TestConsumer_Integration_Original_CreatesPendingAndAcks(t *testing.T) {
-	consumer, client, repo := newIntegrationConsumer(t, 5, 50*time.Millisecond)
+	consumer, client, repo := newIntegrationConsumer(t, 5, 50*time.Millisecond, integMaxText)
 
 	publish(t, client, consumer, integOriginal)
 	require.NoError(t, consumer.consume(context.Background()))
@@ -89,7 +93,7 @@ func TestConsumer_Integration_Original_CreatesPendingAndAcks(t *testing.T) {
 }
 
 func TestConsumer_Integration_Original_Duplicate_AcksAndDiscards(t *testing.T) {
-	consumer, client, _ := newIntegrationConsumer(t, 5, 50*time.Millisecond)
+	consumer, client, _ := newIntegrationConsumer(t, 5, 50*time.Millisecond, integMaxText)
 
 	publish(t, client, consumer, integOriginal)
 	require.NoError(t, consumer.consume(context.Background()))
@@ -100,7 +104,7 @@ func TestConsumer_Integration_Original_Duplicate_AcksAndDiscards(t *testing.T) {
 }
 
 func TestConsumer_Integration_SummaryResolved_Completes(t *testing.T) {
-	consumer, client, repo := newIntegrationConsumer(t, 5, 50*time.Millisecond)
+	consumer, client, repo := newIntegrationConsumer(t, 5, 50*time.Millisecond, integMaxText)
 
 	publish(t, client, consumer, integOriginal)
 	require.NoError(t, consumer.consume(context.Background()))
@@ -123,7 +127,7 @@ func TestConsumer_Integration_SummaryResolved_Completes(t *testing.T) {
 }
 
 func TestConsumer_Integration_OrphanSummary_GoesToDLQ(t *testing.T) {
-	consumer, client, _ := newIntegrationConsumer(t, 1, 50*time.Millisecond)
+	consumer, client, _ := newIntegrationConsumer(t, 1, 50*time.Millisecond, integMaxText)
 
 	publish(t, client, consumer, `{
 		"event_type": "summary_resolved",
@@ -143,7 +147,7 @@ func TestConsumer_Integration_OrphanSummary_GoesToDLQ(t *testing.T) {
 }
 
 func TestConsumer_Integration_InvalidEvent_RetriesThenDLQ(t *testing.T) {
-	consumer, client, _ := newIntegrationConsumer(t, 2, 100*time.Millisecond)
+	consumer, client, _ := newIntegrationConsumer(t, 2, 100*time.Millisecond, integMaxText)
 
 	publish(t, client, consumer, `{
 		"event_type": "original",
@@ -169,7 +173,7 @@ func TestConsumer_Integration_InvalidEvent_RetriesThenDLQ(t *testing.T) {
 }
 
 func TestConsumer_Integration_InvalidJSON_GoesToDLQ(t *testing.T) {
-	consumer, client, _ := newIntegrationConsumer(t, 1, 50*time.Millisecond)
+	consumer, client, _ := newIntegrationConsumer(t, 1, 50*time.Millisecond, integMaxText)
 
 	publish(t, client, consumer, "{no válido")
 
@@ -178,8 +182,30 @@ func TestConsumer_Integration_InvalidJSON_GoesToDLQ(t *testing.T) {
 	require.Zero(t, pendingLen(t, client, consumer))
 }
 
+func TestConsumer_Integration_Original_TooLarge_GoesToDLQ(t *testing.T) {
+	consumer, client, _ := newIntegrationConsumer(t, 1, 50*time.Millisecond, 4)
+
+	publish(t, client, consumer, `{
+		"event_type": "original",
+		"schema_version": 1,
+		"document_id": "doc-1",
+		"checksum": "chk-1",
+		"extracted_text": "demasiado texto",
+		"mime_type": "application/pdf",
+		"metadata": {"filename": "x.pdf"}
+	}`)
+
+	require.NoError(t, consumer.consume(context.Background()))
+
+	require.Zero(t, pendingLen(t, client, consumer))
+	entries, err := client.XRange(context.Background(), consumer.dlqName, "-", "+").Result()
+	require.NoError(t, err)
+	require.Len(t, entries, 1)
+	require.Contains(t, entries[0].Values["error"], "extracted text too large")
+}
+
 func TestConsumer_Integration_Run_StopsOnCancel(t *testing.T) {
-	consumer, _, _ := newIntegrationConsumer(t, 5, 50*time.Millisecond)
+	consumer, _, _ := newIntegrationConsumer(t, 5, 50*time.Millisecond, integMaxText)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)

@@ -32,12 +32,13 @@ const (
 // fallos quedan pending, se reclaman con XAUTOCLAIM tras el backoff y van a
 // la DLQ cuando se agotan los reintentos.
 type StreamConsumer struct {
-	client      *redis.Client
-	streamName  string
-	streamGroup string
-	dlqName     string
-	handlers    *MessageHandlers
-	retry       *RetryDLQ
+	client       *redis.Client
+	streamName   string
+	streamGroup  string
+	dlqName      string
+	maxTextBytes int64
+	handlers     *MessageHandlers
+	retry        *RetryDLQ
 }
 
 func NewStreamConsumer(
@@ -45,17 +46,19 @@ func NewStreamConsumer(
 	streamName, streamGroup, dlqName string,
 	service *application.DocumentService,
 	retry *RetryDLQ,
+	maxTextBytes int64,
 ) (*StreamConsumer, error) {
 	if client == nil {
 		return nil, errNotConnected
 	}
 	return &StreamConsumer{
-		client:      client,
-		streamName:  streamName,
-		streamGroup: streamGroup,
-		dlqName:     dlqName,
-		handlers:    NewMessageHandlers(service),
-		retry:       retry,
+		client:       client,
+		streamName:   streamName,
+		streamGroup:  streamGroup,
+		dlqName:      dlqName,
+		maxTextBytes: maxTextBytes,
+		handlers:     NewMessageHandlers(service),
+		retry:        retry,
 	}, nil
 }
 
