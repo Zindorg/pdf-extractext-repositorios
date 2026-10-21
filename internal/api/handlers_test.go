@@ -75,6 +75,8 @@ func TestHandler_GetByDocumentID_OK(t *testing.T) {
 	require.Equal(t, "AVAILABLE", raw["delivery_status"])
 	require.Equal(t, "mi archivo.pdf", raw["filename"])
 	require.Equal(t, "application/pdf", raw["mime_type"])
+	require.Equal(t, float64(342), raw["extraction_time_ms"])
+	require.Equal(t, float64(120), raw["summary_time_ms"])
 }
 
 func TestHandler_GetByDocumentID_NotFound(t *testing.T) {
@@ -104,6 +106,13 @@ func TestHandler_GetByChecksum_OK(t *testing.T) {
 	var got api.DocumentResponse
 	require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &got))
 	require.Equal(t, "doc-1", got.DocumentID)
+
+	var raw map[string]any
+	require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &raw))
+	require.Equal(t, float64(342), raw["extraction_time_ms"])
+	summaryTime, ok := raw["summary_time_ms"]
+	require.True(t, ok, "summary_time_ms debe estar presente y ser null")
+	require.Nil(t, summaryTime)
 }
 
 func TestHandler_GetByChecksum_NotFound(t *testing.T) {

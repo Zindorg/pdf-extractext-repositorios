@@ -178,6 +178,10 @@ func TestE2E_Flow_OriginalThenSummaryThenOperations(t *testing.T) {
 	require.Equal(t, "AVAILABLE", got["delivery_status"])
 	require.Equal(t, "informe-e2e.pdf", got["filename"])
 	require.Equal(t, "application/pdf", got["mime_type"])
+	require.Equal(t, float64(342), got["extraction_time_ms"])
+	summaryTime, ok := got["summary_time_ms"]
+	require.True(t, ok, "summary_time_ms debe estar presente y ser null")
+	require.Nil(t, summaryTime)
 	require.Equal(t, "informe-e2e.pdf", got["metadata"].(map[string]any)["filename"])
 
 	// 4. GET by checksum
@@ -223,6 +227,8 @@ func TestE2E_Flow_OriginalThenSummaryThenOperations(t *testing.T) {
 	resp.Body.Close()
 	require.Equal(t, "RESOLVED", got["summary_status"])
 	require.NotNil(t, got["summary"])
+	require.Equal(t, float64(342), got["extraction_time_ms"])
+	require.Equal(t, float64(120), got["summary_time_ms"])
 	require.Equal(t, float64(462), got["processing_time_ms"].(float64)) // 342+120
 
 	// 9. Download summary

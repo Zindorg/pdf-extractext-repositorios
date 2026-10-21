@@ -65,3 +65,42 @@ func TestToResponse_DeliveryFilenameAndMimeType(t *testing.T) {
 	require.Equal(t, "informe.pdf", got["filename"])
 	require.Equal(t, "application/pdf", got["mime_type"])
 }
+
+func TestToResponse_TimingsAndDeletedAt(t *testing.T) {
+	summary := "resumen"
+	deletedAt := time.Now().UTC()
+	doc := domain.Document{
+		DocumentID:       "doc-1",
+		Summary:          &summary,
+		ExtractionTimeMS: 342,
+		SummaryTimeMS:    120,
+		DeletedAt:        &deletedAt,
+	}
+
+	got := marshalResponse(t, doc)
+
+	require.Equal(t, float64(342), got["extraction_time_ms"])
+	require.Equal(t, float64(120), got["summary_time_ms"])
+	require.NotNil(t, got["deleted_at"])
+}
+
+func TestToResponse_NoSummaryKeepsNullableFieldsPresent(t *testing.T) {
+	got := marshalResponse(t, domain.Document{DocumentID: "doc-1", ExtractionTimeMS: 342})
+
+	require.Equal(t, float64(342), got["extraction_time_ms"])
+	summaryTime, ok := got["summary_time_ms"]
+	require.True(t, ok, "summary_time_ms debe estar presente y ser null")
+	require.Nil(t, summaryTime)
+	deleted, ok := got["deleted_at"]
+	require.True(t, ok, "deleted_at debe estar presente y ser null")
+	require.Nil(t, deleted)
+}
+
+func marshalResponse(t *testing.T, doc domain.Document) map[string]any {
+	t.Helper()
+	raw, err := json.Marshal(toResponse(doc))
+	require.NoError(t, err)
+	var got map[string]any
+	require.NoError(t, json.Unmarshal(raw, &got))
+	return got
+}
