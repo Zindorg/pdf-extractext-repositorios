@@ -22,9 +22,12 @@ type DocumentResponse struct {
 	ExtractedText    string          `json:"extracted_text"`
 	Summary          *string         `json:"summary"`
 	Metadata         domain.Metadata `json:"metadata"`
+	ExtractionTimeMS int64           `json:"extraction_time_ms"`
+	SummaryTimeMS    *int64          `json:"summary_time_ms"`
 	ProcessingTimeMS int64           `json:"processing_time_ms"`
 	CreatedAt        time.Time       `json:"created_at"`
 	UpdatedAt        time.Time       `json:"updated_at"`
+	DeletedAt        *time.Time      `json:"deleted_at"`
 }
 
 type ListResponse struct {
@@ -49,8 +52,18 @@ func toResponse(doc domain.Document) DocumentResponse {
 		ExtractedText:    doc.ExtractedText,
 		Summary:          doc.Summary,
 		Metadata:         doc.Metadata,
+		ExtractionTimeMS: doc.ExtractionTimeMS,
+		SummaryTimeMS:    summaryTimeMS(doc),
 		ProcessingTimeMS: doc.ExtractionTimeMS + doc.SummaryTimeMS,
 		CreatedAt:        doc.CreatedAt,
 		UpdatedAt:        doc.UpdatedAt,
+		DeletedAt:        doc.DeletedAt,
 	}
+}
+
+func summaryTimeMS(doc domain.Document) *int64 {
+	if doc.Summary == nil {
+		return nil
+	}
+	return &doc.SummaryTimeMS
 }
