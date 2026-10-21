@@ -11,7 +11,7 @@ services:
       - redis_data:/data
     networks:
       mired:
-        aliases: [redis]
+        aliases: [persister-redis]
     ports:
       - "127.0.0.1:6379:6379"
     security_opt:
