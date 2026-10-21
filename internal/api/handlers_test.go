@@ -161,6 +161,37 @@ func TestHandler_List_OK_PaginationAndFilters(t *testing.T) {
 	require.Equal(t, 2, paged.Page)
 }
 
+func TestHandler_List_FilterBySummaryStatus(t *testing.T) {
+	router, svc := newTestRouter()
+	seedCompleted(t, svc, "doc-1", "chk-1", "a", "resumen 1")
+	seedPending(t, svc, "doc-2", "chk-2", "b")
+	seedWithStatus(t, svc, "doc-3", "chk-3", "c", domain.SummaryNotRequested)
+	seedWithStatus(t, svc, "doc-4", "chk-4", "d", domain.SummaryFailed)
+
+	rr := doGet(t, router, "/api/v1/documents?status=PENDING")
+	require.Equal(t, http.StatusOK, rr.Code)
+	var pending api.ListResponse
+	require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &pending))
+	require.Len(t, pending.Items, 1)
+	require.Equal(t, "doc-2", pending.Items[0].DocumentID)
+	require.Equal(t, int64(1), pending.Total)
+
+	rr = doGet(t, router, "/api/v1/documents?status=NOT_REQUESTED")
+	require.Equal(t, http.StatusOK, rr.Code)
+	var notreq api.ListResponse
+	require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &notreq))
+	require.Len(t, notreq.Items, 1)
+	require.Equal(t, "doc-3", notreq.Items[0].DocumentID)
+	require.Equal(t, int64(1), notreq.Total)
+
+	rr = doGet(t, router, "/api/v1/documents?status=FAILED")
+	require.Equal(t, http.StatusOK, rr.Code)
+	var failed api.ListResponse
+	require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &failed))
+	require.Len(t, failed.Items, 0)
+	require.Equal(t, int64(0), failed.Total)
+}
+
 func TestHandler_List_InvalidStatus_BadRequest(t *testing.T) {
 	router, _ := newTestRouter()
 
