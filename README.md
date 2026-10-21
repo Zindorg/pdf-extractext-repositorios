@@ -75,7 +75,7 @@ Composes individuales: `make compose-mongo`, `make compose-redis`, `make compose
 
 Solo lectura/borrado; no hay `POST /documents` (la creación llega por stream).
 
-> **Estado actual (2026-10-18)**: `/health`, lectura por `id`/`checksum`,
+> **Estado actual (2026-10-21)**: `/health`, lectura por `id`/`checksum`,
 > listado, descargas, soft-delete y restore implementados (sin endpoints en
 > `501`). Middleware que propaga `X-Request-ID`; Swagger descartado para el MVP
 > (ADR-008); test e2e vertical en `test/e2e` (requiere compose). La tabla
@@ -84,15 +84,17 @@ Solo lectura/borrado; no hay `POST /documents` (la creación llega por stream).
 | Método | Ruta                                        | Respuesta                     |
 | ------ | ------------------------------------------- | ----------------------------- |
 | `GET`  | `/api/v1/health`                            | `200 {"status":"ok"}` / `503` |
-| `GET`  | `/api/v1/documents/{id}`                    | `200` documento / `404`       |
-| `GET`  | `/api/v1/documents/checksum/{checksum}`     | `200` documento / `404`       |
+| `GET`  | `/api/v1/documents/{id}`                    | `200` documento / `404 document_not_found` |
+| `GET`  | `/api/v1/documents/checksum/{checksum}`     | `200` documento / `404 document_not_found` |
 | `GET`  | `/api/v1/documents`                         | `200` lista paginada          |
 | `GET`  | `/api/v1/documents/{id}/download/original`  | `200 text/plain`              |
-| `GET`  | `/api/v1/documents/{id}/download/summary`   | `200 text/plain` / `409`      |
+| `GET`  | `/api/v1/documents/{id}/download/summary`   | `200 text/plain` / `404 summary_not_available` / `409 summary_pending` |
 | `DELETE` | `/api/v1/documents/{id}`                  | `204` (soft-delete)           |
-| `POST` | `/api/v1/documents/{id}/restore`            | `204` / `409`                 |
+| `POST` | `/api/v1/documents/{id}/restore`            | `204` / `404` / `409 checksum_conflict` |
 
-Errores en envelope `{"code","message","details"}`; paginación por defecto `20`, máx `100`.
+Errores en envelope `{"code","message","details"}` con códigos públicos `invalid_request`, `document_not_found`, `summary_not_available`, `summary_pending`, `checksum_conflict`. El payload del stream llega bajo la clave `payload`. Paginación por defecto `20`, máx `100`. Filtro `status` acepta `NOT_REQUESTED|PENDING|RESOLVED|FAILED` (`FAILED` → lista vacía).
+
+**Supuestos provisionales:** `metadata` typed `{filename,size_bytes,page_count}` (claves extra descartadas), precedencia top-level `filename` sobre `metadata.filename`, `summary_status: FAILED` nunca llega al stream.
 
 ## Contribuciones
 

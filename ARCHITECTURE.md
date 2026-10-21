@@ -263,6 +263,7 @@ type persistedDocument struct {
   partialFilterExpression: { "deleted_at": null } }   // solo activos
 { key: { "metadata.filename": 1 },      name: "ix_filename" }
 { key: { "created_at": -1 },            name: "ix_created_at" }
+{ key: { "summary_status": 1 },         name: "ix_summary_status" }
 ```
 
 ### Reglas y decisiones sobre los datos
@@ -272,7 +273,7 @@ type persistedDocument struct {
 - **Deduplicación a nivel de BD**: índice único parcial sobre `checksum` (filter `deleted_at: null`). Insertar un checksum ya activo → error del driver código `11000` → `409 Conflict`.
 - **Dedup por contenido**: `checksum = SHA-256(extracted_text)`, calculado por el **productor** (Orquestador); este servicio lo persiste tal cual (fuente de verdad del valor, no lo recalcula).
 - **Tiempos de cómputo**: el Orquestador registra `extraction_time_ms` (evento `original`) y `summary_time_ms` (evento `summary_resolved`); el Persistidor los almacena por separado. Solo la capa API de lectura los suma como `processing_time_ms` (valor informativo, conforme `Especificaciones_v3.md` §6.B). See ADR-007.
-- **Status** como ciclo de vida: `PENDING` (llegó el original) → `COMPLETED` (llegó el resumen). No hay timeout: un `PENDING` conserva su checksum ocupado.
+- **`summary_status`** como eje de resumen: `NOT_REQUESTED | PENDING | RESOLVED | FAILED`. Al ingerir `original`, se normaliza: si declara `RESOLVED` pasa a `PENDING` hasta que llegue el texto del resumen (idempotencia por presencia de `summary`); `FAILED` se conserva. `filename` viene top-level con precedencia sobre `metadata.filename`. Idempotencia por presencia de resumen, no por estado. No hay timeout: un `PENDING` conserva su checksum ocupado.
 - **Soft delete** como estado (`deleted_at`), no borrado físico: un doc borrado sale del índice parcial → **libera** su checksum → permite re-ingerir el mismo contenido con un **nuevo** `document_id`.
 - **Restore**: re-activar (unset `deleted_at`) colisiona en el índice único con un nuevo activo ya re-ingerido → `11000` → `ErrRestoreConflict` → `409`. El índice es la fuente de verdad, sin carreras.
 - **Mapeo**: el adaptador convierte BSON ↔ `Document`; `ObjectId`, `Status` y tipos BSON nunca salen hacia la API (expone `document_id`, `status` como string).
@@ -285,11 +286,17 @@ type persistedDocument struct {
 STREAM  document-events
 GROUP   documents-persister (created by the app al arrancar)
 
-Mensaje "original":
+El envoltorio publica `document_id` y el payload JSON bajo la clave `payload`:
+```json
+{"document_id": "<uuid>", "payload": "<json del evento>"}
+```
+
+Mensaje "original" (contenido de `payload`):
 {
   "event_type": "original",
   "schema_version": 1,
   "document_id": "c9bf9e57-1685-4c89-bafb-ff5af830be8a",
+  "filename": "informe_financiero.pdf",
   "checksum": "a6f3…64hex",
   "extracted_text": "…texto extraído…",
   "extraction_time_ms": 342,
@@ -301,7 +308,7 @@ Mensaje "original":
                 "page_count": 12 }
 }
 
-Mensaje "summary_resolved":
+Mensaje "summary_resolved" (contenido de `payload`):
 {
   "event_type": "summary_resolved",
   "schema_version": 1,
@@ -314,7 +321,7 @@ Mensaje "summary_resolved":
 DLQ  document-events-dlq   (copia del mensaje + causa cuando agota retries)
 ```
 
-**Semántica de consumo**: consumer group con entregas *at-least-once*. Procesar ⇒ `XACK`. Fallo recuperable ⇒ reinversión con `XAUTOCLAIM` y backoff (max retries); pasado el límite ⇒ copia a `document-events-dlq` + `XACK` para no bloquear el group. Duplicados legítimos (mismo `document_id`/`checksum` activo, o `summary_resolved` sobre un `COMPLETED`) ⇒ `XACK` + descarte silencioso. Mensajes inválidos (`schema_version != 1`, JSON o campos requeridos rotos) ⇒ **retry → DLQ**, nunca éxito. Discriminador tolerante `event_type`/`event` (ADR-007).
+**Semántica de consumo**: consumer group con entregas *at-least-once*. Procesar ⇒ `XACK`. Fallo recuperable ⇒ reinversión con `XAUTOCLAIM` y backoff (max retries); pasado el límite ⇒ copia a `document-events-dlq` + `XACK` para no bloquear el group. Duplicados legítimos (mismo `document_id`/`checksum` activo, o `summary_resolved` sobre un documento ya resuelto) ⇒ `XACK` + descarte silencioso. Mensajes inválidos (`schema_version != 1`, JSON o campos requeridos rotos) ⇒ **retry → DLQ**, nunca éxito. Discriminador tolerante `event_type`/`event` (ADR-007). El payload se lee del campo `payload`.
 
 ---
 
@@ -322,31 +329,38 @@ DLQ  document-events-dlq   (copia del mensaje + causa cuando agota retries)
 
 > **Accesible solo por el Orquestador** por URL de red interna (`http://persister:8083`). No se expone por Traefik. La creación NO usa HTTP: llega por stream (§4/§9).
 >
-> **Estado (2026-10-07)**: `/health`, lectura por `document_id`/`checksum`, listado, descargas, soft-delete y restore implementados. No quedan endpoints en `501`. La tabla es el contrato real.
+> **Estado (2026-10-21)**: `/health`, lectura por `document_id`/`checksum`, listado, descargas, soft-delete y restore implementados. No quedan endpoints en `501`. La tabla es el contrato real.
 
 | Método | Ruta | Request | Éxito | Errores |
 |---|---|---|---|---|
-| GET | `/documents/{document_id}` | — | `200` + documento (`extracted_text`, `summary`, `metadata`, `processing_time_ms`) | `400` · `404` |
-| GET | `/documents/checksum/{checksum}` | — | `200` + doc | `400` · `404` |
-| GET | `/documents/{document_id}/download/original` | — | `200` `text/plain` + `Content-Disposition` (RFC 5987, filename del metadata) | `400` · `404` |
-| GET | `/documents/{document_id}/download/summary` | — | `200` `text/plain` + `Content-Disposition` (RFC 5987, `summary-{id}.txt`) | `400` · `404` · `409` code `summary_pending` (aún `PENDING`) |
-| GET | `/documents` | `page, page_size, status, filename, created_from, created_to, include_deleted` | `200` `{items, total, page, page_size}` | `400` |
-| DELETE | `/documents/{document_id}` | — | `204` (soft) | `400` · `404` |
-| POST | `/documents/{document_id}/restore` | — | `204` | `400` · `404` · `409` conflicto checksum |
+| GET | `/documents/{document_id}` | — | `200` + documento | `400` · `404` `document_not_found` |
+| GET | `/documents/checksum/{checksum}` | — | `200` + doc | `400` · `404` `document_not_found` |
+| GET | `/documents/{document_id}/download/original` | — | `200` `text/plain` + `Content-Disposition` (RFC 5987) | `400` · `404` `document_not_found` |
+| GET | `/documents/{document_id}/download/summary` | — | `200` `text/plain` + `Content-Disposition` (RFC 5987, `summary-{id}.txt`) | `400` · `404` `summary_not_available` (sin resumen / `NOT_REQUESTED` / `FAILED`) · `409` `summary_pending` (aún `PENDING`) |
+| GET | `/documents` | `page, page_size, status, filename, created_from, created_to, include_deleted` | `200` `{items, total, page, page_size}` | `400` `invalid_request` |
+| DELETE | `/documents/{document_id}` | — | `204` (soft) | `400` · `404` `document_not_found` |
+| POST | `/documents/{document_id}/restore` | — | `204` | `400` · `404` `document_not_found` · `409` `checksum_conflict` |
 | GET | `/health` | — | `200` `{status:"ok"}` | `503` BD/Redis caídos |
+
+**Respuesta `DocumentResponse`**: `document_id`, `filename`, `mime_type`, `checksum`, `delivery_status` (siempre `"AVAILABLE"`), `summary_status` (`NOT_REQUESTED|PENDING|RESOLVED|FAILED`), `extracted_text`, `summary` (`string|null`), `metadata`, `extraction_time_ms`, `summary_time_ms` (`int64|null` si no hay resumen), `processing_time_ms` (`extraction_time_ms + summary_time_ms`), `created_at`, `updated_at`, `deleted_at` (`time|null` si activo).
 
 > **Nota de diseño**: no hay `POST /documents`. La escritura es evento-dirigida (hub & spoke). Si más adelante se quisiera una vía REST de alta, se agregaría como decisión formal (ADR) y devolvería `409` ante checksum/document_id activo.
 
-Envelope de error consistente: `{"code": "...", "message": "...", "details": {...}}`. Paginación default 20, máx 100. Listado excluye soft-deleted por defecto.
+Envelope de error consistente: `{"code": "...", "message": "...", "details": {...}}`. Códigos públicos del Orquestador: `invalid_request`, `document_not_found`, `summary_not_available`, `summary_pending`, `checksum_conflict`. Paginación default 20, máx 100. Listado excluye soft-deleted por defecto; `status=FAILED` devuelve lista vacía. Filtro `status` acepta `NOT_REQUESTED|PENDING|RESOLVED|FAILED`.
 
-> **Sobre los `400`**: en las rutas con parámetro de path (`{document_id}`, `{checksum}`) el `400` es contractual pero **no alcanzable** — Gin garantiza parámetro no vacío. El único `400` real (`code: BAD_REQUEST`) es la validación de la query de `List` (status/fechas/paginación inválidos). El `409` de `download/summary` emite `code: summary_pending` (code literal del Orquestador, delta 12).
+> **Sobre los `400`**: en las rutas con parámetro de path (`{document_id}`, `{checksum}`) el `400` es contractual pero **no alcanzable** — Gin garantiza parámetro no vacío. El único `400` real (`code: invalid_request`) es la validación de la query de `List` (status/fechas/paginación inválidos).
+
+**Supuestos provisionales (pendientes de confirmación):**
+1. `metadata` typed `{filename, size_bytes, page_count}`; claves extra se descartan.
+2. Precedencia top-level `filename` sobre `metadata.filename`.
+3. `summary_status: FAILED` nunca llega al stream.
 
 ---
 
 ## 11. Cross-cutting concerns
 
 - **Config**: env vars con defaults (`HTTP_PORT`, `MONGODB_URI`, `MONGODB_DATABASE`, `REDIS_ADDR`, `STREAM_NAME`, `STREAM_GROUP`, `DLQ_NAME`, `RETRY_MAX`, `RETRY_BACKOFF`, `MAX_TEXT_BYTES`, `LOG_LEVEL`) — 12-factor.
-- **Errores**: errores de dominio → HTTP (`404/409/500`) vía mapeo central en `internal/api/errors.go`.
+- **Errores**: errores de dominio → HTTP vía mapeo central único en `internal/api/errors.go` (`document_not_found` 404, `summary_not_available` 404, `summary_pending`/`checksum_conflict` 409, `invalid_request` 400). Validación HTTP en `List` usa `invalid_request`.
 - **Observabilidad**: logger de acceso (Gin), `/health` con ping a Mongo y Redis (consumido por el Orquestador para detectar disponibilidad). Middleware de request-ID (`X-Request-ID`): implementado; propaga el header si viene, no lo genera.
 - **Seguridad**: sin auth en MVP (red interna) — extensible con middleware de API key/JWT. `MAX_TEXT_BYTES` limita `extracted_text` en la ingesta (por encima ⇒ retry → DLQ); el default `15 << 20` queda por debajo del límite de 16 MiB por documento de MongoDB.
 - **Validación**: en DTOs y eventos (binding + validator) para los bordes; reglas de negocio en el servicio.
