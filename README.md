@@ -43,12 +43,45 @@ make run
 Cada componente tiene su propio compose; `make compose-up` los levanta en orden (mongo → redis → app):
 
 ```sh
+# Red compartida con el ecosistema
+docker network create mired 2>/dev/null || true
+
 cp .env.example .env
 make compose-up        # mongo + redis + persister
 curl http://localhost:8083/api/v1/health   # {"status":"ok"}
 ```
 
-Composes individuales: `make compose-mongo`, `make compose-redis`, `make compose-app`. La app queda expuesta al ecosistema como `http://persister:8083` en la red `mired`. Por seguridad, los puertos del host se publican solo en `127.0.0.1` (nunca en la LAN) y Mongo queda aislada en la red interna `db-net`.
+Composes individuales: `make compose-mongo`, `make compose-redis`, `make compose-app`. La app queda expuesta al ecosistema como `http://persister:8083` en la red `mired` (y opcionalmente `http://persister.internal` vía Traefik). Por seguridad, los puertos del host se publican solo en `127.0.0.1` (nunca en la LAN) y Mongo queda aislada en la red interna `db-net`.
+
+### Verificación tras el arranque
+
+```sh
+# Health
+curl -i http://127.0.0.1:8083/api/v1/health
+
+# Logs (índices + consumer group)
+docker logs --tail 40 persister-app
+
+# Redis (stream, consumer group y consumidores)
+docker exec persister-redis redis-cli XRANGE document-events - + | head -5
+docker exec persister-redis redis-cli XINFO GROUPS document-events
+docker exec persister-redis redis-cli XINFO CONSUMERS document-events documents-persister
+
+# Mongo (índices)
+docker exec persister-mongo mongosh --quiet --eval 'db.getSiblingDB(process.env.MONGODB_DATABASE||"text_extractor_db").documents.getIndexes()' 2>&1 | grep -E 'uq_document_id|uq_checksum_active|ix_filename|ix_created_at|ix_summary_status'
+```
+
+Criterio de éxito: `/health` → `200 {"status":"ok"}`, existe el consumer group `documents-persister`, los 5 índices aparecen en Mongo.
+
+### Conectividad con el Orquestador
+
+El Orquestador debe estar en la red `mired`. Desde un contenedor del Orquestador:
+
+```sh
+docker exec <orquestador-container> curl -i http://persister:8083/api/v1/health
+```
+
+El servicio expone también labels Traefik (`Host(persister.internal)`) en la red `mired`. El stream `document-events` debe publicarse con `XADD` usando `{"document_id": "...", "payload": "<json>"}` (el consumer lee el campo `payload`).
 
 ## Configuración
 
