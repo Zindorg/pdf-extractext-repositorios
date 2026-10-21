@@ -15,6 +15,7 @@ const (
 	idxChecksumAlive = "uq_checksum_active"
 	idxFilename      = "ix_filename"
 	idxCreatedAt     = "ix_created_at"
+	idxSummaryStatus = "ix_summary_status"
 )
 
 // EnsureIndexes crea los índices definidos en ARCHITECTURE.md §8.
@@ -39,5 +40,7 @@ func indexModels() []mongo.IndexModel {
 			Options: options.Index().SetName(idxFilename)},
 		{Keys: bson.D{{Key: "created_at", Value: -1}},
 			Options: options.Index().SetName(idxCreatedAt)},
+		{Keys: bson.D{{Key: "summary_status", Value: 1}},
+			Options: options.Index().SetName(idxSummaryStatus)},
 	}
 }

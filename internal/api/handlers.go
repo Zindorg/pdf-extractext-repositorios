@@ -67,6 +67,10 @@ func (h *DocumentHandler) List(c *gin.Context) {
 		abortBadRequest(c, err)
 		return
 	}
+	if filter.SummaryStatus != nil && *filter.SummaryStatus == domain.SummaryFailed {
+		c.JSON(http.StatusOK, ListResponse{Items: []DocumentResponse{}, Total: 0, Page: page, PageSize: pageSize})
+		return
+	}
 	items, total, err := h.service.List(c.Request.Context(), filter, page, pageSize)
 	if err != nil {
 		abortWithError(c, err)
