@@ -175,6 +175,9 @@ func TestE2E_Flow_OriginalThenSummaryThenOperations(t *testing.T) {
 	require.NoError(t, json.NewDecoder(resp.Body).Decode(&got))
 	resp.Body.Close()
 	require.Equal(t, "PENDING", got["summary_status"])
+	require.Equal(t, "AVAILABLE", got["delivery_status"])
+	require.Equal(t, "informe-e2e.pdf", got["filename"])
+	require.Equal(t, "application/pdf", got["mime_type"])
 	require.Equal(t, "informe-e2e.pdf", got["metadata"].(map[string]any)["filename"])
 
 	// 4. GET by checksum

@@ -69,6 +69,12 @@ func TestHandler_GetByDocumentID_OK(t *testing.T) {
 	require.Equal(t, "resumen", *got.Summary)
 	require.Equal(t, int64(462), got.ProcessingTimeMS)
 	require.Equal(t, "mi archivo.pdf", got.Metadata.Filename)
+
+	var raw map[string]any
+	require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &raw))
+	require.Equal(t, "AVAILABLE", raw["delivery_status"])
+	require.Equal(t, "mi archivo.pdf", raw["filename"])
+	require.Equal(t, "application/pdf", raw["mime_type"])
 }
 
 func TestHandler_GetByDocumentID_NotFound(t *testing.T) {

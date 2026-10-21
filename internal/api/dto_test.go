@@ -1,6 +1,7 @@
 package api
 
 import (
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -43,4 +44,24 @@ func TestToResponse_NilSummary(t *testing.T) {
 
 	require.Nil(t, got.Summary)
 	require.Equal(t, "", got.SummaryStatus)
+}
+
+func TestToResponse_DeliveryFilenameAndMimeType(t *testing.T) {
+	doc := domain.Document{
+		DocumentID:    "doc-1",
+		ExtractedText: "texto",
+		Metadata: domain.Metadata{
+			Filename: "informe.pdf",
+			MimeType: "application/pdf",
+		},
+	}
+
+	raw, err := json.Marshal(toResponse(doc))
+	require.NoError(t, err)
+	var got map[string]any
+	require.NoError(t, json.Unmarshal(raw, &got))
+
+	require.Equal(t, "AVAILABLE", got["delivery_status"])
+	require.Equal(t, "informe.pdf", got["filename"])
+	require.Equal(t, "application/pdf", got["mime_type"])
 }
