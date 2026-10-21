@@ -7,6 +7,7 @@ var (
 	ErrDuplicateChecksum   = errors.New("duplicate checksum")
 	ErrDuplicateDocumentID = errors.New("duplicate document id")
 	ErrSummaryPending      = errors.New("summary not ready")
+	ErrSummaryNotAvailable = errors.New("summary not available")
 	ErrRestoreConflict     = errors.New("restore conflict: checksum already in use")
 	ErrTextTooLarge        = errors.New("extracted text too large")
 )

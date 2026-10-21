@@ -23,6 +23,7 @@ var errorMappings = []struct {
 	code   string
 }{
 	{domain.ErrNotFound, http.StatusNotFound, "NOT_FOUND"},
+	{domain.ErrSummaryNotAvailable, http.StatusNotFound, "summary_not_available"},
 	{domain.ErrDuplicateChecksum, http.StatusConflict, "DUPLICATE_CHECKSUM"},
 	{domain.ErrDuplicateDocumentID, http.StatusConflict, "DUPLICATE_DOCUMENT_ID"},
 	{domain.ErrRestoreConflict, http.StatusConflict, "RESTORE_CONFLICT"},

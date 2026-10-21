@@ -90,11 +90,23 @@ func (h *DocumentHandler) DownloadSummary(c *gin.Context) {
 		abortWithError(c, err)
 		return
 	}
-	if !doc.HasSummary() {
-		abortWithError(c, domain.ErrSummaryPending)
+	if err := summaryError(*doc); err != nil {
+		abortWithError(c, err)
 		return
 	}
 	h.serveText(c, *doc.Summary, "summary-"+doc.DocumentID+".txt")
+}
+
+// summaryError separa "todavía no está" (409) de "no existe ni va a existir" (404).
+func summaryError(doc domain.Document) error {
+	switch {
+	case doc.HasSummary():
+		return nil
+	case doc.SummaryStatus == domain.SummaryPending:
+		return domain.ErrSummaryPending
+	default:
+		return domain.ErrSummaryNotAvailable
+	}
 }
 
 func (h *DocumentHandler) SoftDelete(c *gin.Context) {
