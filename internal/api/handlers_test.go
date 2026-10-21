@@ -28,9 +28,15 @@ func newTestRouter() (*gin.Engine, *application.DocumentService) {
 // seedPending inserta un documento PENDING vía el servicio.
 func seedPending(t *testing.T, svc *application.DocumentService, id, checksum, text string) {
 	t.Helper()
+	seedWithStatus(t, svc, id, checksum, text, domain.SummaryPending)
+}
+
+// seedWithStatus inserta un documento con el estado de resumen indicado vía el servicio.
+func seedWithStatus(t *testing.T, svc *application.DocumentService, id, checksum, text string, status domain.SummaryStatus) {
+	t.Helper()
 	_, err := svc.CreatePending(context.Background(), domain.Document{
 		DocumentID: id, Checksum: checksum, ExtractedText: text,
-		SummaryStatus:    domain.SummaryPending,
+		SummaryStatus:    status,
 		Metadata:         domain.Metadata{Filename: "mi archivo.pdf", MimeType: "application/pdf"},
 		ExtractionTimeMS: 342,
 	})
@@ -209,6 +215,24 @@ func TestHandler_DownloadSummary_Pending_Conflict(t *testing.T) {
 	rr := doGet(t, router, "/api/v1/documents/doc-1/download/summary")
 	require.Equal(t, http.StatusConflict, rr.Code)
 	require.JSONEq(t, `{"code":"summary_pending","message":"summary not ready"}`, rr.Body.String())
+}
+
+func TestHandler_DownloadSummary_NotRequested_NotFound(t *testing.T) {
+	router, svc := newTestRouter()
+	seedWithStatus(t, svc, "doc-1", "chk-1", "texto", domain.SummaryNotRequested)
+
+	rr := doGet(t, router, "/api/v1/documents/doc-1/download/summary")
+	require.Equal(t, http.StatusNotFound, rr.Code)
+	require.JSONEq(t, `{"code":"summary_not_available","message":"summary not available"}`, rr.Body.String())
+}
+
+func TestHandler_DownloadSummary_Failed_NotFound(t *testing.T) {
+	router, svc := newTestRouter()
+	seedWithStatus(t, svc, "doc-1", "chk-1", "texto", domain.SummaryFailed)
+
+	rr := doGet(t, router, "/api/v1/documents/doc-1/download/summary")
+	require.Equal(t, http.StatusNotFound, rr.Code)
+	require.JSONEq(t, `{"code":"summary_not_available","message":"summary not available"}`, rr.Body.String())
 }
 
 func TestHandler_DownloadSummary_NotFound(t *testing.T) {

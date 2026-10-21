@@ -284,6 +284,27 @@ func TestE2E_Flow_OriginalThenSummaryThenOperations(t *testing.T) {
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	resp.Body.Close()
 
+	// 16. A document without summary requested: summary_not_available
+	noSummaryID := "e2e-doc-2"
+	publishEvent(t, redisCli, stream, map[string]any{
+		"event_type":         "original",
+		"schema_version":     1,
+		"document_id":        noSummaryID,
+		"checksum":           "chk-e2e-2",
+		"extracted_text":     "sin resumen",
+		"extraction_time_ms": 100,
+		"mime_type":          "application/pdf",
+		"summary_requested":  false,
+	})
+	waitForStatus(t, client, srv.URL+"/api/v1/documents/"+noSummaryID, "NOT_REQUESTED")
+
+	resp, err = client.Get(srv.URL + "/api/v1/documents/" + noSummaryID + "/download/summary")
+	require.NoError(t, err)
+	require.Equal(t, http.StatusNotFound, resp.StatusCode)
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&errBody))
+	resp.Body.Close()
+	require.Equal(t, "summary_not_available", errBody["code"].(string))
+
 	// Cleanup
 	_ = mongoCli.Database(e2eMongoDB).Drop(context.Background())
 }
