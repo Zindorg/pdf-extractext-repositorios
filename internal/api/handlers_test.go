@@ -90,7 +90,7 @@ func TestHandler_GetByDocumentID_NotFound(t *testing.T) {
 
 	rr := doGet(t, router, "/api/v1/documents/no-existe")
 	require.Equal(t, http.StatusNotFound, rr.Code)
-	require.JSONEq(t, `{"code":"NOT_FOUND","message":"document not found"}`, rr.Body.String())
+	require.JSONEq(t, `{"code":"document_not_found","message":"document not found"}`, rr.Body.String())
 }
 
 func TestHandler_GetByDocumentID_SoftDeleted_IsNotFound(t *testing.T) {
@@ -166,7 +166,7 @@ func TestHandler_List_InvalidStatus_BadRequest(t *testing.T) {
 
 	rr := doGet(t, router, "/api/v1/documents?status=HECHO")
 	require.Equal(t, http.StatusBadRequest, rr.Code)
-	require.JSONEq(t, `{"code":"BAD_REQUEST","message":"invalid status"}`, rr.Body.String())
+	require.JSONEq(t, `{"code":"invalid_request","message":"invalid status"}`, rr.Body.String())
 }
 
 func TestHandler_List_InvalidCreatedFrom_BadRequest(t *testing.T) {
@@ -174,7 +174,7 @@ func TestHandler_List_InvalidCreatedFrom_BadRequest(t *testing.T) {
 
 	rr := doGet(t, router, "/api/v1/documents?created_from=no-es-fecha")
 	require.Equal(t, http.StatusBadRequest, rr.Code)
-	require.JSONEq(t, `{"code":"BAD_REQUEST","message":"invalid created_from"}`, rr.Body.String())
+	require.JSONEq(t, `{"code":"invalid_request","message":"invalid created_from"}`, rr.Body.String())
 }
 
 func TestHandler_DownloadOriginal_OK(t *testing.T) {

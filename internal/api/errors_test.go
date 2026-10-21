@@ -20,7 +20,6 @@ func TestHTTPStatusFor(t *testing.T) {
 	}{
 		{name: "not found", err: domain.ErrNotFound, want: http.StatusNotFound},
 		{name: "duplicate checksum", err: domain.ErrDuplicateChecksum, want: http.StatusConflict},
-		{name: "duplicate document id", err: domain.ErrDuplicateDocumentID, want: http.StatusConflict},
 		{name: "restore conflict", err: domain.ErrRestoreConflict, want: http.StatusConflict},
 		{name: "summary not ready", err: domain.ErrSummaryPending, want: http.StatusConflict},
 		{name: "wrapped domain error", err: fmt.Errorf("capa: %w", domain.ErrNotFound), want: http.StatusNotFound},
@@ -40,12 +39,11 @@ func TestErrorCodeFor(t *testing.T) {
 		err  error
 		want string
 	}{
-		{name: "not found", err: domain.ErrNotFound, want: "NOT_FOUND"},
-		{name: "duplicate checksum", err: domain.ErrDuplicateChecksum, want: "DUPLICATE_CHECKSUM"},
-		{name: "duplicate document id", err: domain.ErrDuplicateDocumentID, want: "DUPLICATE_DOCUMENT_ID"},
-		{name: "restore conflict", err: domain.ErrRestoreConflict, want: "RESTORE_CONFLICT"},
+		{name: "not found", err: domain.ErrNotFound, want: "document_not_found"},
+		{name: "duplicate checksum", err: domain.ErrDuplicateChecksum, want: "checksum_conflict"},
+		{name: "restore conflict", err: domain.ErrRestoreConflict, want: "checksum_conflict"},
 		{name: "summary not ready", err: domain.ErrSummaryPending, want: "summary_pending"},
-		{name: "wrapped domain error", err: fmt.Errorf("capa: %w", domain.ErrNotFound), want: "NOT_FOUND"},
+		{name: "summary not available", err: domain.ErrSummaryNotAvailable, want: "summary_not_available"},
 		{name: "unknown error", err: errors.New("boom"), want: "INTERNAL_ERROR"},
 	}
 	for _, tc := range cases {
@@ -62,5 +60,5 @@ func TestAbortWithError(t *testing.T) {
 	abortWithError(c, domain.ErrNotFound)
 
 	require.Equal(t, http.StatusNotFound, rr.Code)
-	require.JSONEq(t, `{"code":"NOT_FOUND","message":"document not found"}`, rr.Body.String())
+	require.JSONEq(t, `{"code":"document_not_found","message":"document not found"}`, rr.Body.String())
 }

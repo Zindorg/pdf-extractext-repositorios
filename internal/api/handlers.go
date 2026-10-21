@@ -221,7 +221,7 @@ func parsePagination(c *gin.Context) (int, int, error) {
 // validación HTTP (no son errores de dominio: no pasan por errorMappings).
 func abortBadRequest(c *gin.Context, err error) {
 	c.AbortWithStatusJSON(http.StatusBadRequest, ErrorEnvelope{
-		Code:    "BAD_REQUEST",
+		Code:    "invalid_request",
 		Message: err.Error(),
 	})
 }

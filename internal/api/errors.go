@@ -22,13 +22,10 @@ var errorMappings = []struct {
 	status int
 	code   string
 }{
-	{domain.ErrNotFound, http.StatusNotFound, "NOT_FOUND"},
+	{domain.ErrNotFound, http.StatusNotFound, "document_not_found"},
 	{domain.ErrSummaryNotAvailable, http.StatusNotFound, "summary_not_available"},
-	{domain.ErrDuplicateChecksum, http.StatusConflict, "DUPLICATE_CHECKSUM"},
-	{domain.ErrDuplicateDocumentID, http.StatusConflict, "DUPLICATE_DOCUMENT_ID"},
-	{domain.ErrRestoreConflict, http.StatusConflict, "RESTORE_CONFLICT"},
-	// summary_pending (minúsculas) es el code literal del Orquestador (delta 12):
-	// esta fila no sigue la convención UPPER del resto a propósito.
+	{domain.ErrDuplicateChecksum, http.StatusConflict, "checksum_conflict"},
+	{domain.ErrRestoreConflict, http.StatusConflict, "checksum_conflict"},
 	{domain.ErrSummaryPending, http.StatusConflict, "summary_pending"},
 }
 
