@@ -1,30 +1,26 @@
 services:
   persister:
-    build: .
-    container_name: persister-app
+    image: pdf-extractext-repositorios:v${VERSION:-0.1.0}
+    build: ../pdf-extractext-repositorios
     restart: unless-stopped
-    labels:
-      - "traefik.enable=true"
-      - "traefik.docker.network=mired"
-      - "traefik.http.routers.persister.rule=Host(`persister.internal`)"
-      - "traefik.http.routers.persister.entrypoints=web"
-      - "traefik.http.services.persister.loadbalancer.server.port=8083"
     environment:
-      MONGODB_URI: mongodb://mongo:27017/${MONGODB_DATABASE:-text_extractor_db}
-      REDIS_ADDR: ${REDIS_ADDR:-persister-redis:6379}
-    networks:
-      mired:
-        aliases: [persister, persister-redis]
-      db-net:
-    ports:
-      - "127.0.0.1:8083:8083"
-    security_opt:
-      - no-new-privileges:true
-
-networks:
-  # Red del ecosistema: se crea con docker network create mired.
-  mired:
-    external: true
-  # Red de datos creada por docker-compose.mongo.yml; acá solo se referencia.
-  db-net:
-    external: true
+      - TZ=${TZ:-America/Argentina/Mendoza}
+      - HTTP_PORT=8083
+      - MONGODB_URI=mongodb://mongo:27017/${MONGODB_DATABASE:-text_extractor_db}
+      - MONGODB_DATABASE=${MONGODB_DATABASE:-text_extractor_db}
+      - REDIS_ADDR=redis:6379
+      - STREAM_NAME=${STREAM_NAME:-document-events}
+      - STREAM_GROUP=${STREAM_GROUP:-documents-persister}
+      - DLQ_NAME=${DLQ_NAME:-document-events-dlq}
+    networks: [mired, db-net]
+    depends_on:
+      redis: { condition: service_healthy }
+      mongo: { condition: service_healthy }
+    labels:
+      - traefik.enable=true
+      - traefik.edge=internal
+      - traefik.docker.network=mired
+      - traefik.http.routers.persister.rule=Host(`persister.internal`)
+      - traefik.http.routers.persister.entrypoints=http
+      - traefik.http.routers.persister.middlewares=int-ratelimit@file,int-cb@file
+      - traefik.http.services.persister.loadbalancer.server.port=8083

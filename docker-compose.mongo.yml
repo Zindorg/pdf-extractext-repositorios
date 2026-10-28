@@ -1,10 +1,3 @@
-# MongoDB del microservicio persister.
-# - db-net (internal: true): ruta privada app↔mongo, sin salida a internet.
-#   Solo la app la alcanza; el Orquestador nunca se conecta a esta red.
-# - db-dev: red secundaria SIN internal, necesaria porque Docker no publica
-#   puertos de contenedores conectados solo a redes internas. Con el
-#   masquerade deshabilitado no hay salida a internet; solo habilita el
-#   puerto en loopback para dev/tests locales.
 services:
   mongo:
     image: mongo:8
