@@ -12,10 +12,9 @@ services:
       - STREAM_NAME=${STREAM_NAME:-document-events}
       - STREAM_GROUP=${STREAM_GROUP:-documents-persister}
       - DLQ_NAME=${DLQ_NAME:-document-events-dlq}
-    networks: [mired, db-net]
-    depends_on:
-      redis: { condition: service_healthy }
-      mongo: { condition: service_healthy }
+    networks:
+      - mired
+      - db-net
     labels:
       - traefik.enable=true
       - traefik.edge=internal
@@ -24,3 +23,10 @@ services:
       - traefik.http.routers.persister.entrypoints=http
       - traefik.http.routers.persister.middlewares=int-ratelimit@file,int-cb@file
       - traefik.http.services.persister.loadbalancer.server.port=8083
+
+networks:
+  mired:
+    external: true
+  db-net:
+    external: true
+    

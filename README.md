@@ -13,7 +13,7 @@ internal/adapters/mongodb/ persistencia BSON + creación de índices
 internal/adapters/redis/  consumer de stream + DLQ (Redis Streams, consumer group)
 internal/adapters/health/ ping de Mongo y Redis para /health
 internal/api/        router Gin, handlers, DTOs y health check
-internal/testutil/   fixtures de documentos compartidos por los tests
+internal/testutil/   fixtures, seeders y helpers HTTP compartidos por los tests
 ```
 
 ## Requisitos
@@ -26,7 +26,7 @@ internal/testutil/   fixtures de documentos compartidos por los tests
 ## Correr localmente
 
 ```sh
-# dependencias: Mongo 8 + Redis 7
+# dependencias: Mongo 4.4 + Redis 7
 docker compose -f docker-compose.mongo.yml up -d
 docker compose -f docker-compose.redis.yml up -d
 
