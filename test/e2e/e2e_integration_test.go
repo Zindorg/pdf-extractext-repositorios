@@ -155,7 +155,7 @@ func TestE2E_Flow_OriginalThenSummaryThenOperations(t *testing.T) {
 	resp.Body.Close()
 
 	docID := "e2e-doc-1"
-	checksum := "chk-e2e-1"
+	checksum := "41e788906cda034d1cbfc30a8a7f44e90a2cb8a5a7bfd1ab3e26a36a8f0066a2"
 
 	// 2. Publish original
 	original := map[string]any{
@@ -185,9 +185,9 @@ func TestE2E_Flow_OriginalThenSummaryThenOperations(t *testing.T) {
 	require.Equal(t, "informe-e2e.pdf", got["filename"])
 	require.Equal(t, "application/pdf", got["mime_type"])
 	require.Equal(t, float64(342), got["extraction_time_ms"])
-	summaryTime, ok := got["summary_time_ms"]
-	require.True(t, ok, "summary_time_ms debe estar presente y ser null")
-	require.Nil(t, summaryTime)
+	// summary_time_ms se omite (omitempty) cuando es nil (PENDING)
+	_, hasSummaryTime := got["summary_time_ms"]
+	require.False(t, hasSummaryTime, "summary_time_ms no debe estar presente en PENDING")
 	require.Equal(t, "informe-e2e.pdf", got["metadata"].(map[string]any)["filename"])
 
 	// 4. GET by checksum
@@ -292,11 +292,12 @@ func TestE2E_Flow_OriginalThenSummaryThenOperations(t *testing.T) {
 
 	// 16. A document without summary requested: summary_not_available
 	noSummaryID := "e2e-doc-2"
+	noSummaryChecksum := "eaa0952bc0ab76e1102b8d6ea2565e012141fe686c6b529a7894b8ba1ea454d7"
 	publishEvent(t, redisCli, stream, map[string]any{
 		"event_type":         "original",
 		"schema_version":     1,
 		"document_id":        noSummaryID,
-		"checksum":           "chk-e2e-2",
+		"checksum":           noSummaryChecksum,
 		"extracted_text":     "sin resumen",
 		"extraction_time_ms": 100,
 		"mime_type":          "application/pdf",

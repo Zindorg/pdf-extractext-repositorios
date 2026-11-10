@@ -4,6 +4,7 @@ package redis
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -125,7 +126,7 @@ const integOriginal = `{
 	"event_type": "original",
 	"schema_version": 1,
 	"document_id": "doc-1",
-	"checksum": "chk-1",
+	"checksum": "f46e3b17a6b639e5efddc3d1498ad73491599c22220f7ef6e14772f4ee25b913",
 	"extracted_text": "texto",
 	"extraction_time_ms": 342,
 	"mime_type": "application/pdf",
@@ -303,6 +304,7 @@ func TestConsumer_Integration_TwoConsumers_ShareGroup(t *testing.T) {
 		MaxTextBytes: integMaxText,
 	}, service, NewRetryDLQ(5, 50*time.Millisecond))
 	require.NoError(t, err)
+	require.NoError(t, consumerB.ensureGroup(context.Background()))
 
 	ctx, cancelConsumers := context.WithCancel(context.Background())
 	defer cancelConsumers()
@@ -310,21 +312,27 @@ func TestConsumer_Integration_TwoConsumers_ShareGroup(t *testing.T) {
 	go func() { _ = consumerA.Run(ctx) }()
 	go func() { _ = consumerB.Run(ctx) }()
 
-	// Publicar 4 eventos originales
+	// Dar tiempo a que los consumers arranquen
+	time.Sleep(100 * time.Millisecond)
+
+	// Publicar 4 eventos originales con checksums correctos
 	for i := 1; i <= 4; i++ {
+		text := fmt.Sprintf("texto %d", i)
+		h := sha256.Sum256([]byte(text))
+		checksum := fmt.Sprintf("%x", h)
 		publish(t, client, consumerA, fmt.Sprintf(`{
 			"event_type": "original",
 			"schema_version": 1,
 			"document_id": "doc-%d",
-			"checksum": "chk-%d",
-			"extracted_text": "texto %d",
+			"checksum": "%s",
+			"extracted_text": "%s",
 			"extraction_time_ms": 100,
 			"mime_type": "application/pdf",
 			"summary_requested": false,
 			"summary_status": "NOT_REQUESTED",
 			"filename": "file-%d.pdf",
 			"metadata": {"filename": "x.pdf"}
-		}`, i, i, i, i))
+		}`, i, checksum, text, i))
 	}
 
 	// Poll hasta que todos los documentos estén en el repo (sin duplicados)
