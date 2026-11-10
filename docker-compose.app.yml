@@ -26,16 +26,7 @@ services:
       options:
         max-size: "10m"
         max-file: "5"
-    labels:
-      - traefik.enable=true
-      - traefik.edge=internal
-      - traefik.docker.network=mired
-      - traefik.http.routers.persister.rule=Host(`persister.internal`)
-      - traefik.http.routers.persister.entrypoints=http
-      - traefik.http.routers.persister.middlewares=int-ratelimit@file,int-cb@file
-      - traefik.http.services.persister.loadbalancer.server.port=8083
-
-networks:
+    networks:
   mired:
     external: true
   db-net:

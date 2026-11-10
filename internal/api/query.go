@@ -2,6 +2,7 @@ package api
 
 import (
 	"fmt"
+	"regexp"
 	"strconv"
 	"time"
 
@@ -17,7 +18,8 @@ func parseListFilter(c *gin.Context) (domain.ListFilter, error) {
 		return filter, err
 	}
 	if s := c.Query("filename"); s != "" {
-		filter.Filename = &s
+		escaped := regexp.QuoteMeta(s)
+		filter.Filename = &escaped
 	}
 	if filter.CreatedFrom, err = parseTimeQuery(c.Query("created_from"), "created_from"); err != nil {
 		return filter, err
@@ -60,6 +62,13 @@ func parsePagination(c *gin.Context) (int, int, error) {
 	pageSize, err := strconv.Atoi(c.DefaultQuery("page_size", strconv.Itoa(domain.DefaultPageSize)))
 	if err != nil {
 		return 0, 0, fmt.Errorf("invalid page_size")
+	}
+	const MaxPage = 1000
+	if page < 1 || page > MaxPage {
+		return 0, 0, fmt.Errorf("page out of range (1-%d)", MaxPage)
+	}
+	if pageSize < 1 || pageSize > domain.MaxPageSize {
+		return 0, 0, fmt.Errorf("page_size out of range (1-%d)", domain.MaxPageSize)
 	}
 	return page, pageSize, nil
 }

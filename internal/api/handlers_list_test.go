@@ -93,3 +93,44 @@ func TestHandler_List_InvalidCreatedFrom_BadRequest(t *testing.T) {
 	require.Equal(t, http.StatusBadRequest, rr.Code)
 	requireErrorBody(t, rr, "invalid_request", "invalid created_from")
 }
+
+func TestHandler_List_FilenameEscapesRegex(t *testing.T) {
+	router, svc := newTestRouter()
+	seedCompleted(t, svc, "doc-1", "chk-1", "a", "resumen 1")
+	seedCompleted(t, svc, "doc-2", "chk-2", "b", "resumen 2")
+	// filename contains regex metacharacters
+	seedCompleted(t, svc, "doc-3", "chk-3", "c", "resumen 3")
+	require.NoError(t, svc.SoftDelete(context.Background(), "doc-3"))
+
+	// Search for literal "a*b" - should not match "a" or "b" separately
+	rr := testutil.DoGet(t, router, "/api/v1/documents?filename=a*b")
+	require.Equal(t, http.StatusOK, rr.Code)
+	var filtered api.ListResponse
+	require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &filtered))
+	require.Len(t, filtered.Items, 0)
+	require.Equal(t, int64(0), filtered.Total)
+}
+
+func TestHandler_List_PaginationBounds_BadRequest(t *testing.T) {
+	router, _ := newTestRouter()
+
+	// page > MaxPage
+	rr := testutil.DoGet(t, router, "/api/v1/documents?page=9999")
+	require.Equal(t, http.StatusBadRequest, rr.Code)
+	requireErrorBody(t, rr, "invalid_request", "page out of range (1-1000)")
+
+	// page_size > MaxPageSize (100)
+	rr = testutil.DoGet(t, router, "/api/v1/documents?page_size=999")
+	require.Equal(t, http.StatusBadRequest, rr.Code)
+	requireErrorBody(t, rr, "invalid_request", "page_size out of range (1-100)")
+
+	// page < 1
+	rr = testutil.DoGet(t, router, "/api/v1/documents?page=0")
+	require.Equal(t, http.StatusBadRequest, rr.Code)
+	requireErrorBody(t, rr, "invalid_request", "page out of range (1-1000)")
+
+	// page_size < 1
+	rr = testutil.DoGet(t, router, "/api/v1/documents?page_size=0")
+	require.Equal(t, http.StatusBadRequest, rr.Code)
+	requireErrorBody(t, rr, "invalid_request", "page_size out of range (1-100)")
+}
