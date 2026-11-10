@@ -78,6 +78,10 @@ func (c *StreamConsumer) Run(ctx context.Context) error {
 		}
 		return fmt.Errorf("stream: %w", err)
 	}
+
+	// Iniciar loop periódico de XTRIM MINID (cada minuto).
+	go c.trimLoop(ctx)
+
 	for {
 		if err := c.consume(ctx); err != nil {
 			if ctx.Err() != nil {
@@ -165,5 +169,81 @@ func (c *StreamConsumer) ensureGroup(ctx context.Context) error {
 	if err != nil && !strings.Contains(err.Error(), "BUSYGROUP") {
 		return fmt.Errorf("xgroup create: %w", err)
 	}
+	return nil
+}
+
+// trimLoop ejecuta XTRIM MINID periódicamente para recortar el stream.
+// Se ejecuta cada minuto. El umbral es el menor entre:
+// - el ID pendiente más viejo del grupo (XPENDING)
+// - now - 7 días (en ms)
+// Si no hay pendientes, usa last-delivered-id del grupo (XINFO GROUPS).
+// Nunca recorta mensajes sin entregar (pending) porque el umbral es <= al
+// menor ID pendiente.
+func (c *StreamConsumer) trimLoop(ctx context.Context) {
+	ticker := time.NewTicker(time.Minute)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if err := c.trimStream(ctx); err != nil {
+				slog.Debug("stream trim failed", "stream", c.streamName, "error", err)
+			}
+		}
+	}
+}
+
+// trimStream calcula el umbral y ejecuta XTRIM MINID.
+func (c *StreamConsumer) trimStream(ctx context.Context) error {
+	// 1. Obtener el ID pendiente más viejo del grupo.
+	pending, err := c.client.XPendingExt(ctx, &redis.XPendingExtArgs{
+		Stream: c.streamName,
+		Group:  c.streamGroup,
+		Start:  "-",
+		End:    "+",
+		Count:  1,
+	}).Result()
+	if err != nil {
+		return fmt.Errorf("xpending: %w", err)
+	}
+
+	var oldestPendingID string
+	if len(pending) > 0 {
+		oldestPendingID = pending[0].ID
+	} else {
+		// 2. Si no hay pendientes, usar last-delivered-id del grupo.
+		groups, err := c.client.XInfoGroups(ctx, c.streamName).Result()
+		if err != nil {
+			return fmt.Errorf("xinfo groups: %w", err)
+		}
+		for _, g := range groups {
+			if g.Name == c.streamGroup {
+				oldestPendingID = g.LastDeliveredID
+				break
+			}
+		}
+	}
+
+	// 3. Calcular umbral por tiempo (now - 7 días en ms).
+	sevenDaysAgo := time.Now().Add(-7 * 24 * time.Hour).UnixMilli()
+	timeThresholdID := fmt.Sprintf("%d-0", sevenDaysAgo)
+
+	// 4. El umbral final es el menor entre oldestPendingID y timeThresholdID.
+	// Los IDs de stream son <ms>-<seq>, comparar como string funciona porque ms es la parte principal.
+	var trimID string
+	if oldestPendingID != "" && oldestPendingID < timeThresholdID {
+		trimID = oldestPendingID
+	} else {
+		trimID = timeThresholdID
+	}
+
+	// 5. Ejecutar XTRIM MINID ~ (aproximado para eficiencia).
+	// El ~ evita recortar exactamente en el límite y es más eficiente.
+	if err := c.client.XTrimMinID(ctx, c.streamName, trimID).Err(); err != nil {
+		return fmt.Errorf("xtrim minid: %w", err)
+	}
+	slog.Debug("stream trimmed", "stream", c.streamName, "min_id", trimID)
 	return nil
 }
