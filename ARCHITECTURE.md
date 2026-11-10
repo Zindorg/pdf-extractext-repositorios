@@ -372,7 +372,7 @@ Envelope de error consistente: `{"code": "...", "message": "...", "details": {..
 
 - **Config**: env vars con defaults (`HTTP_PORT`, `MONGODB_URI`, `MONGODB_DATABASE`, `REDIS_ADDR`, `STREAM_NAME`, `STREAM_GROUP`, `DLQ_NAME`, `RETRY_MAX`, `RETRY_BACKOFF`, `MAX_TEXT_BYTES`, `LOG_LEVEL`) — 12-factor.
 - **Errores**: errores de dominio → HTTP vía mapeo central único en `internal/api/errors.go` (`document_not_found` 404, `summary_not_available` 404, `summary_pending`/`checksum_conflict` 409, `invalid_request` 400). Validación HTTP en `List` usa `invalid_request`.
-- **Observabilidad**: logger de acceso (Gin), `/health` con ping a Mongo y Redis (consumido por el Orquestador para detectar disponibilidad). Middleware de request-ID (`X-Request-ID`): implementado; propaga el header si viene, no lo genera. **Opcional**: catálogo Consul con health check cada 10 s (ADR-009) — ver `docker-compose.consul.yml` y `consul/config/persister.hcl`.
+- **Observabilidad**: logger de acceso (Gin), `/health` con ping a Mongo y Redis (consumido por el Orquestador para detectar disponibilidad). Middleware de request-ID (`X-Request-ID`): implementado; propaga el header si viene, no lo genera. **Opcional**: agente Consul client que se une al servidor del ecosistema (`servicios/consul` en `mired`), registra `persister` con check HTTP `/api/v1/health` c/10s — ver `docker-compose.consul.yml`, `consul/config/client.hcl`, `consul/config/persister.hcl`.
 - **Seguridad**: sin auth en MVP (red interna) — extensible con middleware de API key/JWT. `MAX_TEXT_BYTES` limita `extracted_text` en la ingesta (por encima ⇒ retry → DLQ); el default `15 << 20` queda por debajo del límite de 16 MiB por documento de MongoDB.
 - **Validación**: en DTOs y eventos (binding + validator) para los bordes; reglas de negocio en el servicio.
 
@@ -390,8 +390,7 @@ Live en `docs/adr/`:
 - **ADR-006 — Hub & Spoke con URL interna (no Traefik en este servicio)**: este microservicio NO se expone por Traefik; el Orquestador lo alcanza por nombre de servicio Docker (`http://persister:8083`), cumpliendo "URL, nunca IP" sin romper el aislamiento (spec §2.1/§7). Traefik solo enruta hacia el Orquestador (red pública).
 - **ADR-007 — Reconocimiento del contrato de eventos del Orquestador (delta-persister)**: se adoptan los deltas 1–6 (`summary_resolved`, `extraction_time_ms`/`summary_time_ms`, `schema_version`, `event_type` con fallback a `event`, `summary_requested`/`summary_status`, `mime_type` top-level); se aplican 7–12 (el 7 —request-ID— con el middleware que propaga `X-Request-ID`; el 12 —`summary_pending` 409— en el Slice 7). Mensajes inválidos ⇒ retry → DLQ; sin idempotencia por `event_id`.
 - **ADR-008 — Swagger/OpenAPI**: descartado para el MVP; el contrato HTTP vive en §10. Reversible con un nuevo ADR si el ecosistema lo requiere.
-- **ADR-009 — Registro en Consul (catálogo + health check)**: registro estático del servicio `persister` con check HTTP contra `/api/v1/health`; no reemplaza DNS de Docker ni labels de Traefik; opt-in vía `make compose-consul`.
-- **ADR-010 — Circuit Breaker + Rate Limit in-app**: CB primitivo (closed/open/half-open) envuelve repo Mongo; RL token-bucket por IP en middleware Gin; ambos configurables por env (`CB_FAILURES`, `CB_TIMEOUT`, `RATE_LIMIT_RPS`, `RATE_LIMIT_BURST`).
+- **ADR-009 — Agente Consul client**: agente client que se une al servidor Consul del ecosistema (`servicios/consul`, dc `dc-converter`, nodo `ds`) vía `retry_join = ["consul"]` en `mired`; registra servicio `persister` con check HTTP `/api/v1/health` c/10s; opt-in vía `make compose-consul`. ACLs hoy `default_policy: allow`; preparado para token por servicio cuando pasen a `deny`.
 - **ADR-011 — Cache Redis read-through**: decorator `CachedRepository` (fail-open, TTL configurable, keys `doc:{id}`/`docchk:{checksum}`, invalidación en writes, List no cacheado).
 - **ADR-012 — Saga forward-only**: sin coreografía ni orquestación; idempotencia + dedup + retry/DLQ cubren el caso; recuperación manual vía DLQ.
 
@@ -484,18 +483,17 @@ networks:
 ```yaml
 # docker-compose.consul.yml (opt-in)
 services:
-  consul:
+  consul-client:
     image: hashicorp/consul:2.1.0
-    container_name: persister-consul
+    container_name: persister-consul-client
     restart: unless-stopped
     command: ["agent", "-config-dir=/consul/config"]
     volumes:
       - ./consul/config:/consul/config
-      - consul_data:/consul/data
+      - consul_client_data:/consul/data
     networks:
       mired:
-        aliases: [consul]
-    ports: [ "127.0.0.1:8500:8500" ]
+        aliases: [consul-client]
     security_opt: [ no-new-privileges:true ]
     healthcheck:
       test: ["CMD", "consul", "members"]
@@ -507,7 +505,7 @@ networks:
   mired: { external: true }
 
 volumes:
-  consul_data:
+  consul_client_data:
 ```
 
 - **Comunicación entre microservicios por URL, nunca IP**: el Orquestador llama al Persistidor con `http://persister:8083` y este se conecta a Mongo/Redis por nombre (`mongo`, `redis`), resuelto por DNS en `mired`/`db-net`. Los nombres de servicio son DNS estables que no cambian al re-arrancar el contenedor (el IP sí cambia), cumpliendo el requisito de las "mini-MV".

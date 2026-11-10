@@ -1,29 +1,63 @@
-# ADR-009 — Registro del servicio en Consul (catálogo + health check)
+# ADR-009 — Agente Consul client para registro en servidor del ecosistema
 
 ## Contexto
-El microservicio `persister` se comunica con el Orquestador vía DNS de Docker (`http://persister:8083`) en la red `mired`. Traefik (en el repo del ecosistema) descubre el servicio mediante labels de Docker (`traefik.enable=true`, `Host(persister.internal)`). Se quiere un catálogo de servicios independiente para observabilidad y descubrimiento alternativo.
+El ecosistema provee un **único servidor Consul** (`servicios/consul`, datacenter `dc-converter`, nodo `ds`) en la red `mired`. El Orquestador se auto-registra vía HTTP API (`PUT /v1/agent/service/register`). El Persister debe registrarse en **ese mismo servidor** para ser descubrible por Traefik y otros servicios.
 
 ## Decisión
-Añadir un agente Consul single-node en `docker-compose.consul.yml` (red `mired`) que registre estáticamente el servicio `persister` con un health check HTTP contra `/api/v1/health`. El registro se carga al arrancar el agente vía archivo HCL en `consul/config/persister.hcl`.
+Levantar un **agente Consul en modo client** (`docker-compose.consul.yml`, red `mired`) que:
+- Se une al servidor vía `retry_join = ["consul"]` (DNS en `mired`)
+- Datacenter `dc-converter`
+- Registra el servicio `persister` vía HCL estático (`consul/config/persister.hcl`) con check HTTP `/api/v1/health` c/10s
+- Opt-in vía `make compose-consul`
 
-- **No hay self-registration en el código Go**: la app distroless no tiene shell ni capacidad de escribir en Consul. El agente hace el check.
-- **No se eliminan los labels de Traefik**: siguen siendo necesarios para que Traefik del ecosistema rutee `persister.internal`. Para quitar los labels haría falta configurar `--providers.consul` en el Traefik del ecosistema (otro repo).
-- **No reemplaza el DNS de Docker**: el tráfico Orquestador→Persister sigue yendo por `http://persister:8083`.
-- **El agente corre en modo server con `bootstrap_expect=1`** (single-node, datos persistidos en volumen) en lugar de `-dev`, para que el catálogo sobreviva a reinicios.
-- **Check cada 10 s**: el agente hace `GET http://persister:8083/api/v1/health` (ping real a Mongo + Redis). Si la app está caída, el servicio queda en estado `critical` (no se desregistra).
+### Detalles de configuración
+**`consul/config/client.hcl`**:
+```hcl
+datacenter = "dc-converter"
+node_name  = "persister-consul-client"
+server     = false
+retry_join = ["consul"]
+data_dir   = "/consul/data"
+client_addr = "0.0.0.0"
+bind_addr   = "0.0.0.0"
+disable_update_check = true
+```
+
+**`consul/config/persister.hcl`** (sin cambios):
+```hcl
+service {
+  name    = "persister"
+  address = "persister"
+  port    = 8083
+  tags    = ["documents","internal","v1"]
+  meta    = { role = "persister" }
+  check {
+    id        = "persister-health"
+    name      = "persister /api/v1/health"
+    http      = "http://persister:8083/api/v1/health"
+    interval  = "10s"
+    timeout   = "3s"
+  }
+}
+```
+
+### ACLs
+Hoy `default_policy: allow` → no requiere token. Cuando el ecosistema pase a `deny`, se crearán tokens por servicio con policy mínima (`service "persister" { policy = "write" }`).
+
+### Gossip encryption
+No configurado hoy. Si se activa, se genera con `consul keygen` y se distribuye por el mismo canal de secretos.
 
 ## Consecuencias
-- Positivo: catálogo consultable en `http://127.0.0.1:8500/v1/health/service/persister` y UI en `http://127.0.0.1:8500/ui`. El Orquestador puede resolver la dirección por Consul si se migra a ese descubrimiento.
-- Negativo: un contenedor extra (~90 MB) y un health check periódico que golpea `/health` (Mongo+Redis).
-- Neutro: no cambia la API, el Dockerfile ni la imagen del persister.
+- **Positivo**: el servicio `persister` aparece en el catálogo central (`servicios/consul`); Traefik y Orquestador lo descubren ahí; health checks los hace el agente local (resiliente).
+- **Negativo**: un contenedor extra (~90 MB) y un health check periódico contra `/health`.
+- **Neutro**: no cambia la API, el Dockerfile ni la imagen del persister.
 
 ## Alternativas evaluadas
 | Alternativa | Por qué se descarta |
 |---|---|
-| Self-registration vía API en `cmd/server` | Requiere dependencia Go / HTTP client en distroless; más código; falla si Consul no está al arrancar. |
-| `consul-template` sidecar | Otro contenedor; complejidad de templates; no aporta nada sobre config estático. |
-| `--providers.consul` en Traefik | Cambio en el repo del ecosistema (fuera de alcance); quita los labels pero no el DNS de Docker. |
-| Solo `-dev` (en memoria) | Pierde el catálogo al reiniciar; no hay persistencia del estado del servicio. |
+| Self-registration vía HTTP API en `cmd/server` (como hace el Orquestador) | Requiere dependencia Go + lógica de deregister; health check dependiente del proceso vivo; si crashea sin deregister, queda "passing" fantasma. |
+| Servidor Consul standalone (lo que había antes) | Crea catálogo separado; el Orquestador no ve el servicio; desperdicia recursos. |
+| `--providers.consul` en Traefik del ecosistema | Cambio fuera de alcance; no resuelve el registro del servicio. |
 
 ## Estado
 Aceptado. Implementado como compose opt-in (`make compose-consul`).

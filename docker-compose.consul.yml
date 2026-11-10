@@ -1,19 +1,16 @@
 services:
-  consul:
+  consul-client:
     image: hashicorp/consul:2.1.0
-    container_name: persister-consul
+    container_name: persister-consul-client
     restart: unless-stopped
     command: ["agent", "-config-dir=/consul/config"]
     volumes:
       - ./consul/config:/consul/config
-      - consul_data:/consul/data
+      - consul_client_data:/consul/data
     networks:
       mired:
-        aliases: [consul]
-    ports:
-      - "127.0.0.1:8500:8500"
-    security_opt:
-      - no-new-privileges:true
+        aliases: [consul-client]
+    security_opt: [ "no-new-privileges:true" ]
     healthcheck:
       test: ["CMD", "consul", "members"]
       interval: 5s
@@ -21,8 +18,7 @@ services:
       retries: 10
 
 networks:
-  mired:
-    external: true
+  mired: { external: true }
 
 volumes:
-  consul_data:
+  consul_client_data:

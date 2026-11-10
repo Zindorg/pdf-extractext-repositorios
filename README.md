@@ -97,7 +97,7 @@ El servicio expone también labels Traefik (`Host(persister.internal)`) en la re
 
 ## Descubrimiento de servicio (Consul)
 
-Opcional. Levanta un agente Consul single-node en la red `mired` que registra `persister` con un health check HTTP contra `/api/v1/health`.
+Opcional. Levanta un **agente Consul client** en la red `mired` que se une al servidor del ecosistema (`servicios/consul`, datacenter `dc-converter`, nodo `ds`) y registra `persister` con health check HTTP contra `/api/v1/health`.
 
 ```sh
 make compose-consul
@@ -105,7 +105,7 @@ curl -s http://127.0.0.1:8500/v1/health/service/persister   # Checks[].Status ==
 # UI: http://127.0.0.1:8500/ui
 ```
 
-**Qué NO hace:** no reemplaza el DNS de Docker (`http://persister:8083`) ni elimina los labels de Traefik (ver [ADR-009](docs/adr/ADR-009-registro-consul.md)). El check cada 10 s golpea `/health` (ping real a Mongo+Redis); si la app está caída el servicio queda `critical` en el catálogo (no se desregistra).
+**Qué NO hace:** no reemplaza el DNS de Docker (`http://persister:8083`). El agente replica el registro al servidor Consul central; el Orquestador y Traefik lo descubren ahí. El check cada 10 s golpea `/health` (ping real a Mongo+Redis); si la app está caída el servicio queda `critical` en el catálogo (no se desregistra).
 
 ## Configuración
 

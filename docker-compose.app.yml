@@ -26,9 +26,9 @@ services:
       options:
         max-size: "10m"
         max-file: "5"
-    networks:
+
+networks:
   mired:
     external: true
   db-net:
     external: true
-    
