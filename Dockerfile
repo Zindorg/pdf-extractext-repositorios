@@ -16,7 +16,7 @@ COPY . .
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
     CGO_ENABLED=0 GOOS=linux \
-    go build -trimpath -buildvcs=false -ldflags="-s -w" -o /out/persister ./cmd/server
+    go build -mod=readonly -trimpath -buildvcs=false -ldflags="-s -w" -o /out/persister ./cmd/server
 
 # ---------- Runtime ----------
 FROM gcr.io/distroless/static-debian12:nonroot
@@ -28,7 +28,6 @@ LABEL org.opencontainers.image.title="pdf-extractext-persister" \
       org.opencontainers.image.version="${VERSION}"
 
 COPY --from=build --chmod=0555 /out/persister /persister
-COPY --chmod=0444 docs/ /docs/
 
 USER 65532:65532
 

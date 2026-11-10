@@ -28,9 +28,12 @@ import (
 )
 
 const (
-	startupTimeout    = 10 * time.Second // ping e índices al arrancar
-	readHeaderTimeout = 5 * time.Second  // hardening: límite de lectura de headers
-	shutdownTimeout   = 10 * time.Second // graceful shutdown
+	startupTimeout    = 10 * time.Second  // ping e índices al arrancar
+	readHeaderTimeout = 5 * time.Second   // hardening: límite de lectura de headers
+	readTimeout       = 10 * time.Second  // hardening: límite de lectura del body
+	writeTimeout      = 30 * time.Second  // hardening: límite de escritura de respuesta
+	idleTimeout       = 120 * time.Second // hardening: límite de conexiones idle
+	shutdownTimeout   = 10 * time.Second  // graceful shutdown
 )
 
 // CLI subcommands para admin processes (12 Factor XII)
@@ -325,6 +328,9 @@ func newServer(cfg *config.Config, service *application.DocumentService, inf *in
 		Addr:              ":" + cfg.HTTPPort,
 		Handler:           api.NewRouter(handler, cfg.RateLimitRPS, cfg.RateLimitBurst),
 		ReadHeaderTimeout: readHeaderTimeout,
+		ReadTimeout:       readTimeout,
+		WriteTimeout:      writeTimeout,
+		IdleTimeout:       idleTimeout,
 	}
 }
 

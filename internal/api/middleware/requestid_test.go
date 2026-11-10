@@ -65,3 +65,24 @@ func TestRequestID_GeneratesIfMissing(t *testing.T) {
 		})
 	}
 }
+
+func TestSanitizeRequestID_StripsControlChars(t *testing.T) {
+	cases := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{"newline", "req\n123", "req123"},
+		{"carriage return", "req\r123", "req123"},
+		{"tab", "req\t123", "req123"},
+		{"mixed", "re\nq\r1\t23", "req123"},
+		{"clean", "req-123", "req-123"},
+		{"empty", "", ""},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			require.Equal(t, tc.want, sanitizeRequestID(tc.input))
+		})
+	}
+}
