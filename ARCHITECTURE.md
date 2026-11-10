@@ -199,7 +199,7 @@ pdf-extractext-repositorios/
 | API | `internal/api` | Contratos HTTP internos (lectura/descarga/borrado/health), validación, docs | DTO, Handler |
 | Infra | docker-compose por componente | `mongo` · `redis` · `app` en composes separados | Red `mired` (ecosistema) + `db-net` (aislada) |
 
-### Decisiones SOLID / ISP (fase 3)
+### Decisiones SOLID / ISP 
 
 | Principio | Decisión | Justificación |
 |---|---|---|
@@ -208,7 +208,7 @@ pdf-extractext-repositorios/
 | **ISP** | `HealthChecker` (1 método) y `StreamConsumer` (1 método) son atómicos. | Ya cumplen ISP por definición. |
 | **DIP** | `api` declara su propio contrato consumer-side (`DocumentUseCases`, `HealthChecker`). | Cumple DIP: el handler no depende del concreto `*application.DocumentService`. |
 | **DIP** | `redis` depende del concreto `*application.DocumentService`. | Decisión deliberada: **una sola implementación** (el servicio real). Los tests usan el servicio real + fake repo; no hay fake del servicio, así que la interfaz consumer-side no aporta valor hoy (YAGNI). Si aparece un segundo consumer o fake del servicio, se extraerá un contrato mínimo `EventUseCases` (`CreatePending` + `CompleteWithSummary`). |
-| **SRP** | Fase 2 separó responsabilidades en archivos: `query.go` (parsing), `download.go` (descargas), `errors.go` (mapeo HTTP), `query.go`/`delete_restore.go`/`errors.go` en Mongo, `dispatch.go`/`failure.go` en Redis. | Cada archivo tiene una sola responsabilidad cohesiva. |
+| **SRP** | separó responsabilidades en archivos: `query.go` (parsing), `download.go` (descargas), `errors.go` (mapeo HTTP), `query.go`/`delete_restore.go`/`errors.go` en Mongo, `dispatch.go`/`failure.go` en Redis. | Cada archivo tiene una sola responsabilidad cohesiva. |
 
 ---
 
