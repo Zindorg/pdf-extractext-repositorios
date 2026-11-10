@@ -34,7 +34,10 @@ func (r *MongoDocumentRepository) Insert(ctx context.Context, doc domain.Documen
 }
 
 func (r *MongoDocumentRepository) Complete(ctx context.Context, documentID string, summary string, summaryTimeMS int64) (*domain.Document, error) {
-	filter := bson.M{"document_id": documentID}
+	filter := bson.M{
+		"document_id": documentID,
+		"deleted_at":  bson.M{"$exists": false},
+	}
 	update := bson.M{"$set": bson.M{
 		"summary_status":  string(domain.SummaryResolved),
 		"summary":         summary,

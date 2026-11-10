@@ -2,7 +2,9 @@ package redis
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
+	"fmt"
 	"log/slog"
 
 	"github.com/marco/pdf-extractext-repositorios/internal/application"
@@ -22,6 +24,9 @@ func NewMessageHandlers(service *application.DocumentService) *MessageHandlers {
 // repetido es legítimo: se descarta silenciosamente (nil ⇒ ACK), no se
 // reintenta.
 func (h *MessageHandlers) OnOriginal(ctx context.Context, ev *OriginalEvent) error {
+	if err := verifyChecksum(ev.ExtractedText, ev.Checksum); err != nil {
+		return err
+	}
 	_, err := h.service.CreatePending(ctx, domain.Document{
 		DocumentID:       ev.DocumentID,
 		Checksum:         ev.Checksum,
@@ -36,6 +41,17 @@ func (h *MessageHandlers) OnOriginal(ctx context.Context, ev *OriginalEvent) err
 		},
 	})
 	return swallowDuplicate(err)
+}
+
+// verifyChecksum comprueba que el checksum proporcionado coincide con
+// SHA256(extracted_text) en minúsculas (formato del orquestador).
+func verifyChecksum(extractedText, checksum string) error {
+	h := sha256.Sum256([]byte(extractedText))
+	computed := fmt.Sprintf("%x", h)
+	if computed != checksum {
+		return fmt.Errorf("%w: expected %s, got %s", domain.ErrInvalidRequest, computed, checksum)
+	}
+	return nil
 }
 
 // summaryStatusFrom normaliza el eje de resumen al ingerir. El original puede

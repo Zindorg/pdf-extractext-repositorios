@@ -11,4 +11,5 @@ var (
 	ErrRestoreConflict     = errors.New("restore conflict: checksum already in use")
 	ErrTextTooLarge        = errors.New("extracted text too large")
 	ErrRateLimited         = errors.New("rate limit exceeded")
+	ErrInvalidRequest      = errors.New("invalid request")
 )

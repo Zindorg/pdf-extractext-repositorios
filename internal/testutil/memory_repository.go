@@ -37,10 +37,10 @@ func (r *MemoryRepository) Insert(_ context.Context, doc domain.Document) error 
 }
 
 // Complete persiste el resumen y pasa el eje a RESOLVED (fake fiel del port):
-// inexistente → ErrNotFound (huérfano); existente → RESOLVED + updated_at.
+// inexistente → ErrNotFound (huérfano); soft-deleted → ErrNotFound; existente → RESOLVED + updated_at.
 func (r *MemoryRepository) Complete(_ context.Context, documentID string, summary string, summaryTimeMS int64) (*domain.Document, error) {
 	doc, ok := r.byID[documentID]
-	if !ok {
+	if !ok || doc.IsDeleted() {
 		return nil, domain.ErrNotFound
 	}
 	doc.SummaryStatus = domain.SummaryResolved
