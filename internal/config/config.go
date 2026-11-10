@@ -22,6 +22,10 @@ const (
 	defaultRetryBackoff    = 5 * time.Second
 	defaultMaxTextBytes    = 15 << 20
 	defaultLogLevel        = "info"
+	defaultRateLimitRPS    = 100
+	defaultRateLimitBurst  = 200
+	defaultCBFailures      = 5
+	defaultCBTimeout       = 30 * time.Second
 )
 
 type Config struct {
@@ -37,6 +41,10 @@ type Config struct {
 	RetryBackoff    time.Duration
 	MaxTextBytes    int64
 	LogLevel        string
+	RateLimitRPS    int
+	RateLimitBurst  int
+	CBFailures      int
+	CBTimeout       time.Duration
 }
 
 // LogLevelParsed returns the parsed slog.Level from LogLevel.
@@ -89,6 +97,18 @@ func loadNumbers(cfg *Config) error {
 	if cfg.MaxTextBytes, err = envParse("MAX_TEXT_BYTES", defaultMaxTextBytes, "integer",
 		func(s string) (int64, error) { return strconv.ParseInt(s, 10, 64) }); err != nil {
 		return fmt.Errorf("MAX_TEXT_BYTES: %w", err)
+	}
+	if cfg.RateLimitRPS, err = envParse("RATE_LIMIT_RPS", defaultRateLimitRPS, "integer", strconv.Atoi); err != nil {
+		return fmt.Errorf("RATE_LIMIT_RPS: %w", err)
+	}
+	if cfg.RateLimitBurst, err = envParse("RATE_LIMIT_BURST", defaultRateLimitBurst, "integer", strconv.Atoi); err != nil {
+		return fmt.Errorf("RATE_LIMIT_BURST: %w", err)
+	}
+	if cfg.CBFailures, err = envParse("CB_FAILURES", defaultCBFailures, "integer", strconv.Atoi); err != nil {
+		return fmt.Errorf("CB_FAILURES: %w", err)
+	}
+	if cfg.CBTimeout, err = envParse("CB_TIMEOUT", defaultCBTimeout, "duration", time.ParseDuration); err != nil {
+		return fmt.Errorf("CB_TIMEOUT: %w", err)
 	}
 	return nil
 }

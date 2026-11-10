@@ -23,6 +23,10 @@ func TestLoadWithDefaults(t *testing.T) {
 	t.Setenv("MAX_TEXT_BYTES", "")
 	t.Setenv("LOG_LEVEL", "")
 	t.Setenv("CONSUMER_NAME", "")
+	t.Setenv("RATE_LIMIT_RPS", "")
+	t.Setenv("RATE_LIMIT_BURST", "")
+	t.Setenv("CB_FAILURES", "")
+	t.Setenv("CB_TIMEOUT", "")
 
 	cfg, err := config.Load()
 	require.NoError(t, err)
@@ -39,6 +43,10 @@ func TestLoadWithDefaults(t *testing.T) {
 	require.Equal(t, "info", cfg.LogLevel)
 	require.NotEmpty(t, cfg.ConsumerName)
 	require.Contains(t, cfg.ConsumerName, "-")
+	require.Equal(t, 100, cfg.RateLimitRPS)
+	require.Equal(t, 200, cfg.RateLimitBurst)
+	require.Equal(t, 5, cfg.CBFailures)
+	require.Equal(t, 30*time.Second, cfg.CBTimeout)
 }
 
 func TestLoadFromEnv(t *testing.T) {
@@ -54,6 +62,10 @@ func TestLoadFromEnv(t *testing.T) {
 	t.Setenv("MAX_TEXT_BYTES", "1048576")
 	t.Setenv("LOG_LEVEL", "debug")
 	t.Setenv("CONSUMER_NAME", "mi-consumer")
+	t.Setenv("RATE_LIMIT_RPS", "50")
+	t.Setenv("RATE_LIMIT_BURST", "100")
+	t.Setenv("CB_FAILURES", "3")
+	t.Setenv("CB_TIMEOUT", "10s")
 
 	cfg, err := config.Load()
 	require.NoError(t, err)
@@ -70,6 +82,10 @@ func TestLoadFromEnv(t *testing.T) {
 	require.Equal(t, int64(1048576), cfg.MaxTextBytes)
 	require.Equal(t, "debug", cfg.LogLevel)
 	require.Equal(t, "mi-consumer", cfg.ConsumerName)
+	require.Equal(t, 50, cfg.RateLimitRPS)
+	require.Equal(t, 100, cfg.RateLimitBurst)
+	require.Equal(t, 3, cfg.CBFailures)
+	require.Equal(t, 10*time.Second, cfg.CBTimeout)
 }
 
 func TestLoad_ConsumerName_DefaultFormat(t *testing.T) {
@@ -89,6 +105,34 @@ func TestLoad_ConsumerName_DefaultFormat(t *testing.T) {
 
 func TestLoadInvalidRetryMax(t *testing.T) {
 	t.Setenv("RETRY_MAX", "abc")
+
+	_, err := config.Load()
+	require.Error(t, err)
+}
+
+func TestLoadInvalidRateLimitRPS(t *testing.T) {
+	t.Setenv("RATE_LIMIT_RPS", "abc")
+
+	_, err := config.Load()
+	require.Error(t, err)
+}
+
+func TestLoadInvalidRateLimitBurst(t *testing.T) {
+	t.Setenv("RATE_LIMIT_BURST", "abc")
+
+	_, err := config.Load()
+	require.Error(t, err)
+}
+
+func TestLoadInvalidCBFailures(t *testing.T) {
+	t.Setenv("CB_FAILURES", "abc")
+
+	_, err := config.Load()
+	require.Error(t, err)
+}
+
+func TestLoadInvalidCBTimeout(t *testing.T) {
+	t.Setenv("CB_TIMEOUT", "abc")
 
 	_, err := config.Load()
 	require.Error(t, err)
