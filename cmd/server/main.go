@@ -71,7 +71,12 @@ func runReindex(cfg *config.Config) error {
 
 func runCleanupDLQ(cfg *config.Config, requeue bool) error {
 	ctx := context.Background()
-	client := redis.NewClient(&redis.Options{Addr: cfg.RedisAddr})
+	opts := &redis.Options{
+		Addr:     cfg.RedisAddr,
+		Username: cfg.RedisUsername,
+		Password: cfg.RedisPassword,
+	}
+	client := redis.NewClient(opts)
 	defer client.Close()
 
 	if err := client.Ping(ctx).Err(); err != nil {
@@ -222,7 +227,7 @@ func (i *infra) close() {
 
 // startInfra conecta Mongo (ping + índices) y Redis (ping).
 func startInfra(ctx context.Context, cfg *config.Config) (*infra, error) {
-	redisClient, err := startRedis(ctx, cfg.RedisAddr)
+	redisClient, err := startRedis(ctx, cfg)
 	if err != nil {
 		return nil, err
 	}
@@ -265,8 +270,13 @@ func startMongo(ctx context.Context, uri, dbName string, cfg *config.Config, red
 }
 
 // startRedis conecta el cliente y verifica que el servidor responda.
-func startRedis(ctx context.Context, addr string) (*redis.Client, error) {
-	client := redis.NewClient(&redis.Options{Addr: addr})
+func startRedis(ctx context.Context, cfg *config.Config) (*redis.Client, error) {
+	opts := &redis.Options{
+		Addr:     cfg.RedisAddr,
+		Username: cfg.RedisUsername,
+		Password: cfg.RedisPassword,
+	}
+	client := redis.NewClient(opts)
 	pingCtx, cancel := context.WithTimeout(ctx, startupTimeout)
 	defer cancel()
 	if err := client.Ping(pingCtx).Err(); err != nil {

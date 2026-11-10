@@ -34,6 +34,8 @@ type Config struct {
 	MongoDBURI      string
 	MongoDBDatabase string
 	RedisAddr       string
+	RedisUsername   string
+	RedisPassword   string
 	StreamName      string
 	StreamGroup     string
 	DLQName         string
@@ -79,6 +81,8 @@ func stringConfig() *Config {
 		MongoDBURI:      env("MONGODB_URI", defaultMongoDBURI),
 		MongoDBDatabase: env("MONGODB_DATABASE", defaultMongoDBDatabase),
 		RedisAddr:       env("REDIS_ADDR", defaultRedisAddr),
+		RedisUsername:   env("REDIS_USERNAME", ""),
+		RedisPassword:   env("REDIS_PASSWORD", ""),
 		StreamName:      env("STREAM_NAME", defaultStreamName),
 		StreamGroup:     env("STREAM_GROUP", defaultStreamGroup),
 		DLQName:         env("DLQ_NAME", defaultDLQName),
