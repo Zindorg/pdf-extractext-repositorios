@@ -50,9 +50,13 @@ func errorCodeFor(err error) string {
 // abortWithError escribe el envelope y corta el request.
 func abortWithError(c *gin.Context, err error) {
 	status := httpStatusFor(err)
+	msg := err.Error()
+	if status == http.StatusInternalServerError {
+		msg = "internal server error"
+	}
 	c.AbortWithStatusJSON(status, ErrorEnvelope{
 		Code:    errorCodeFor(err),
-		Message: err.Error(),
+		Message: msg,
 	})
 }
 

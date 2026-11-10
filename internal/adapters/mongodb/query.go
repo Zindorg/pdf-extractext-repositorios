@@ -2,6 +2,7 @@ package mongodb
 
 import (
 	"context"
+	"regexp"
 
 	"github.com/marco/pdf-extractext-repositorios/internal/domain"
 	"go.mongodb.org/mongo-driver/v2/bson"
@@ -64,7 +65,7 @@ func buildMongoFilter(f domain.ListFilter) bson.M {
 	}
 	if f.Filename != nil {
 		m["metadata.filename"] = bson.M{
-			"$regex":   *f.Filename,
+			"$regex":   regexp.QuoteMeta(*f.Filename),
 			"$options": "i",
 		}
 	}
