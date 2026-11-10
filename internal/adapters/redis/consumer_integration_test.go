@@ -23,7 +23,7 @@ const integMaxText = 1 << 20
 
 // newIntegrationConsumer arranca un consumer sobre Redis real, con streams
 // únicos por test para no colisionar entre ejecuciones.
-func newIntegrationConsumer(t *testing.T, retryMax int, backoff time.Duration, maxTextBytes int64) (*StreamConsumer, *redis.Client, *testutil.MemoryRepository) {
+func newIntegrationConsumer(t *testing.T, retryMax int, backoff time.Duration, maxTextBytes int64, consumerName string) (*StreamConsumer, *redis.Client, *testutil.MemoryRepository) {
 	t.Helper()
 	addr := os.Getenv("REDIS_ADDR")
 	if addr == "" {
@@ -44,7 +44,13 @@ func newIntegrationConsumer(t *testing.T, retryMax int, backoff time.Duration, m
 	stream := fmt.Sprintf("it-events-%d", suffix)
 	group := fmt.Sprintf("it-group-%d", suffix)
 	dlq := fmt.Sprintf("it-dlq-%d", suffix)
-	consumer, err := NewStreamConsumer(client, stream, group, dlq, service, NewRetryDLQ(retryMax, backoff), maxTextBytes)
+	consumer, err := NewStreamConsumer(client, Config{
+		StreamName:   stream,
+		StreamGroup:  group,
+		DLQName:      dlq,
+		ConsumerName: consumerName,
+		MaxTextBytes: maxTextBytes,
+	}, service, NewRetryDLQ(retryMax, backoff))
 	require.NoError(t, err)
 	require.NoError(t, consumer.ensureGroup(context.Background()))
 	return consumer, client, repo
@@ -130,7 +136,7 @@ const integOriginal = `{
 }`
 
 func TestConsumer_Integration_Original_CreatesPendingAndAcks(t *testing.T) {
-	consumer, client, repo := newIntegrationConsumer(t, 5, 50*time.Millisecond, integMaxText)
+	consumer, client, repo := newIntegrationConsumer(t, 5, 50*time.Millisecond, integMaxText, "it-consumer-1")
 
 	doc := ingest(t, client, consumer, repo, integOriginal)
 
@@ -142,7 +148,7 @@ func TestConsumer_Integration_Original_CreatesPendingAndAcks(t *testing.T) {
 }
 
 func TestConsumer_Integration_Original_Duplicate_AcksAndDiscards(t *testing.T) {
-	consumer, client, repo := newIntegrationConsumer(t, 5, 50*time.Millisecond, integMaxText)
+	consumer, client, repo := newIntegrationConsumer(t, 5, 50*time.Millisecond, integMaxText, "it-consumer-2")
 
 	ingest(t, client, consumer, repo, integOriginal)
 	ingest(t, client, consumer, repo, integOriginal)
@@ -151,7 +157,7 @@ func TestConsumer_Integration_Original_Duplicate_AcksAndDiscards(t *testing.T) {
 }
 
 func TestConsumer_Integration_SummaryResolved_Completes(t *testing.T) {
-	consumer, client, repo := newIntegrationConsumer(t, 5, 50*time.Millisecond, integMaxText)
+	consumer, client, repo := newIntegrationConsumer(t, 5, 50*time.Millisecond, integMaxText, "it-consumer-3")
 
 	ingest(t, client, consumer, repo, integOriginal)
 	doc := ingest(t, client, consumer, repo, `{
@@ -167,7 +173,7 @@ func TestConsumer_Integration_SummaryResolved_Completes(t *testing.T) {
 }
 
 func TestConsumer_Integration_OrphanSummary_GoesToDLQ(t *testing.T) {
-	consumer, client, _ := newIntegrationConsumer(t, 1, 50*time.Millisecond, integMaxText)
+	consumer, client, _ := newIntegrationConsumer(t, 1, 50*time.Millisecond, integMaxText, "it-consumer-4")
 
 	publish(t, client, consumer, `{
 		"event_type": "summary_resolved",
@@ -184,7 +190,7 @@ func TestConsumer_Integration_OrphanSummary_GoesToDLQ(t *testing.T) {
 }
 
 func TestConsumer_Integration_InvalidEvent_RetriesThenDLQ(t *testing.T) {
-	consumer, client, _ := newIntegrationConsumer(t, 2, 100*time.Millisecond, integMaxText)
+	consumer, client, _ := newIntegrationConsumer(t, 2, 100*time.Millisecond, integMaxText, "it-consumer-5")
 
 	publish(t, client, consumer, `{
 		"event_type": "original",
@@ -209,7 +215,7 @@ func TestConsumer_Integration_InvalidEvent_RetriesThenDLQ(t *testing.T) {
 }
 
 func TestConsumer_Integration_InvalidJSON_GoesToDLQ(t *testing.T) {
-	consumer, client, _ := newIntegrationConsumer(t, 1, 50*time.Millisecond, integMaxText)
+	consumer, client, _ := newIntegrationConsumer(t, 1, 50*time.Millisecond, integMaxText, "it-consumer-6")
 
 	publish(t, client, consumer, "{no válido")
 
@@ -219,7 +225,7 @@ func TestConsumer_Integration_InvalidJSON_GoesToDLQ(t *testing.T) {
 }
 
 func TestConsumer_Integration_Original_TooLarge_GoesToDLQ(t *testing.T) {
-	consumer, client, _ := newIntegrationConsumer(t, 1, 50*time.Millisecond, 4)
+	consumer, client, _ := newIntegrationConsumer(t, 1, 50*time.Millisecond, 4, "it-consumer-7")
 
 	publish(t, client, consumer, `{
 		"event_type": "original",
@@ -238,7 +244,7 @@ func TestConsumer_Integration_Original_TooLarge_GoesToDLQ(t *testing.T) {
 }
 
 func TestConsumer_Integration_Run_StopsOnCancel(t *testing.T) {
-	consumer, _, _ := newIntegrationConsumer(t, 5, 50*time.Millisecond, integMaxText)
+	consumer, _, _ := newIntegrationConsumer(t, 5, 50*time.Millisecond, integMaxText, "it-consumer-8")
 
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
@@ -252,4 +258,94 @@ func TestConsumer_Integration_Run_StopsOnCancel(t *testing.T) {
 	case <-time.After(3 * time.Second):
 		t.Fatal("Run no retornó tras cancelar ctx")
 	}
+}
+
+// TestConsumer_Integration_TwoConsumers_ShareGroup verifica que dos
+// consumers con nombres distintos en el mismo grupo reparten los mensajes
+// sin duplicarlos (garantía at-least-once con réplicas horizontales).
+func TestConsumer_Integration_TwoConsumers_ShareGroup(t *testing.T) {
+	addr := os.Getenv("REDIS_ADDR")
+	if addr == "" {
+		addr = "localhost:6379"
+	}
+	client := redis.NewClient(&redis.Options{Addr: addr})
+	pingCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if err := client.Ping(pingCtx).Err(); err != nil {
+		t.Skip("Redis no disponible para tests de integración")
+		return
+	}
+	t.Cleanup(func() { _ = client.Close() })
+
+	repo := testutil.NewMemoryRepository()
+	service := application.NewDocumentService(repo)
+
+	suffix := time.Now().UnixNano()
+	stream := fmt.Sprintf("it-events-shared-%d", suffix)
+	group := fmt.Sprintf("it-group-shared-%d", suffix)
+	dlq := fmt.Sprintf("it-dlq-shared-%d", suffix)
+
+	consumerA, err := NewStreamConsumer(client, Config{
+		StreamName:   stream,
+		StreamGroup:  group,
+		DLQName:      dlq,
+		ConsumerName: "replica-A",
+		MaxTextBytes: integMaxText,
+	}, service, NewRetryDLQ(5, 50*time.Millisecond))
+	require.NoError(t, err)
+	require.NoError(t, consumerA.ensureGroup(context.Background()))
+
+	consumerB, err := NewStreamConsumer(client, Config{
+		StreamName:   stream,
+		StreamGroup:  group,
+		DLQName:      dlq,
+		ConsumerName: "replica-B",
+		MaxTextBytes: integMaxText,
+	}, service, NewRetryDLQ(5, 50*time.Millisecond))
+	require.NoError(t, err)
+
+	ctx, cancelConsumers := context.WithCancel(context.Background())
+	defer cancelConsumers()
+
+	go func() { _ = consumerA.Run(ctx) }()
+	go func() { _ = consumerB.Run(ctx) }()
+
+	// Publicar 4 eventos originales
+	for i := 1; i <= 4; i++ {
+		publish(t, client, consumerA, fmt.Sprintf(`{
+			"event_type": "original",
+			"schema_version": 1,
+			"document_id": "doc-%d",
+			"checksum": "chk-%d",
+			"extracted_text": "texto %d",
+			"extraction_time_ms": 100,
+			"mime_type": "application/pdf",
+			"summary_requested": false,
+			"summary_status": "NOT_REQUESTED",
+			"filename": "file-%d.pdf",
+			"metadata": {"filename": "x.pdf"}
+		}`, i, i, i, i))
+	}
+
+	// Poll hasta que todos los documentos estén en el repo (sin duplicados)
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		docs, _, err := repo.List(context.Background(), domain.ListFilter{}, 1, 10)
+		require.NoError(t, err)
+		if len(docs) >= 4 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("timeout esperando 4 documentos, got %d", len(docs))
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+
+	// Assert: exactamente 4 docs (sin duplicados) y pending 0
+	docs, _, err := repo.List(context.Background(), domain.ListFilter{}, 1, 10)
+	require.NoError(t, err)
+	require.Len(t, docs, 4)
+
+	require.Zero(t, pendingLen(t, client, consumerA))
+	require.Zero(t, pendingLen(t, client, consumerB))
 }

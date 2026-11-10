@@ -23,8 +23,16 @@ const (
 	streamPayloadField = "payload"
 	consumeBatch       = 10
 	consumeBlock       = time.Second
-	consumerName       = "persister"
 )
+
+// Config agrupa los ajustes del consumer del stream.
+type Config struct {
+	StreamName   string
+	StreamGroup  string
+	DLQName      string
+	ConsumerName string
+	MaxTextBytes int64
+}
 
 // StreamConsumer consume el stream document-events con un consumer group
 // (entrega at-least-once): los mensajes nuevos se leen con XREADGROUP y los
@@ -35,6 +43,7 @@ type StreamConsumer struct {
 	streamName   string
 	streamGroup  string
 	dlqName      string
+	consumerName string
 	maxTextBytes int64
 	handlers     *MessageHandlers
 	retry        *RetryDLQ
@@ -42,20 +51,20 @@ type StreamConsumer struct {
 
 func NewStreamConsumer(
 	client *redis.Client,
-	streamName, streamGroup, dlqName string,
+	cfg Config,
 	service *application.DocumentService,
 	retry *RetryDLQ,
-	maxTextBytes int64,
 ) (*StreamConsumer, error) {
 	if client == nil {
 		return nil, errNotConnected
 	}
 	return &StreamConsumer{
 		client:       client,
-		streamName:   streamName,
-		streamGroup:  streamGroup,
-		dlqName:      dlqName,
-		maxTextBytes: maxTextBytes,
+		streamName:   cfg.StreamName,
+		streamGroup:  cfg.StreamGroup,
+		dlqName:      cfg.DLQName,
+		consumerName: cfg.ConsumerName,
+		maxTextBytes: cfg.MaxTextBytes,
 		handlers:     NewMessageHandlers(service),
 		retry:        retry,
 	}, nil
@@ -94,7 +103,7 @@ func (c *StreamConsumer) processClaimed(ctx context.Context) error {
 	messages, _, err := c.client.XAutoClaim(ctx, &redis.XAutoClaimArgs{
 		Stream:   c.streamName,
 		Group:    c.streamGroup,
-		Consumer: consumerName,
+		Consumer: c.consumerName,
 		MinIdle:  c.retry.Backoff(),
 		Start:    "-",
 		Count:    consumeBatch,
@@ -110,7 +119,7 @@ func (c *StreamConsumer) processClaimed(ctx context.Context) error {
 func (c *StreamConsumer) processFresh(ctx context.Context) error {
 	streams, err := c.client.XReadGroup(ctx, &redis.XReadGroupArgs{
 		Group:    c.streamGroup,
-		Consumer: consumerName,
+		Consumer: c.consumerName,
 		Streams:  []string{c.streamName, ">"},
 		Count:    consumeBatch,
 		Block:    consumeBlock,
