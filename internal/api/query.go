@@ -28,6 +28,10 @@ func parseListFilter(c *gin.Context) (domain.ListFilter, error) {
 		return filter, err
 	}
 	filter.IncludeDeleted = c.Query("include_deleted") == "true"
+	if it := c.Query("include_text"); it != "" {
+		v := it == "true"
+		filter.IncludeText = &v
+	}
 	return filter, nil
 }
 

@@ -26,7 +26,7 @@ type fakeRepo struct {
 }
 
 func (fakeRepo) Insert(context.Context, domain.Document) error { return nil }
-func (fakeRepo) Complete(context.Context, string, string, int64) (*domain.Document, error) {
+func (fakeRepo) Complete(context.Context, string, string, int64, *time.Time) (*domain.Document, error) {
 	return nil, nil
 }
 func (fakeRepo) FindByDocumentID(context.Context, string) (*domain.Document, error) {
@@ -82,7 +82,8 @@ func seedWithStatus(t *testing.T, svc *application.DocumentService, id, checksum
 func seedCompleted(t *testing.T, svc *application.DocumentService, id, checksum, text, summary string) {
 	t.Helper()
 	seedPending(t, svc, id, checksum, text)
-	_, err := svc.CompleteWithSummary(context.Background(), id, summary, 120)
+	now := time.Now().UTC()
+	_, err := svc.CompleteWithSummary(context.Background(), id, summary, 120, &now)
 	require.NoError(t, err)
 }
 

@@ -11,7 +11,8 @@ import (
 const deliveryAvailable = "AVAILABLE"
 
 // DocumentResponse es el DTO de salida: expone la identidad de negocio,
-// nunca el `_id` interno de Mongo.
+// nunca el `_id` interno de Mongo. extracted_text y summary se omiten
+// cuando include_text=false (omitempty).
 type DocumentResponse struct {
 	DocumentID       string          `json:"document_id"`
 	Filename         string          `json:"filename"`
@@ -19,15 +20,15 @@ type DocumentResponse struct {
 	Checksum         string          `json:"checksum"`
 	DeliveryStatus   string          `json:"delivery_status"`
 	SummaryStatus    string          `json:"summary_status"`
-	ExtractedText    string          `json:"extracted_text"`
-	Summary          *string         `json:"summary"`
+	ExtractedText    string          `json:"extracted_text,omitempty"`
+	Summary          *string         `json:"summary,omitempty"`
 	Metadata         domain.Metadata `json:"metadata"`
 	ExtractionTimeMS int64           `json:"extraction_time_ms"`
-	SummaryTimeMS    *int64          `json:"summary_time_ms"`
+	SummaryTimeMS    *int64          `json:"summary_time_ms,omitempty"`
 	ProcessingTimeMS int64           `json:"processing_time_ms"`
 	CreatedAt        time.Time       `json:"created_at"`
 	UpdatedAt        time.Time       `json:"updated_at"`
-	DeletedAt        *time.Time      `json:"deleted_at"`
+	DeletedAt        *time.Time      `json:"deleted_at,omitempty"`
 }
 
 type ListResponse struct {
@@ -41,16 +42,23 @@ type HealthResponse struct {
 	Status string `json:"status"`
 }
 
-func toResponse(doc domain.Document) DocumentResponse {
-	return DocumentResponse{
+// ChecksumResponse es el DTO para GET /checksum/{checksum}: metadatos + summary.
+// extracted_text se omite cuando include_text=false (omitempty).
+type ChecksumResponse struct {
+	DocumentID    string  `json:"document_id"`
+	SummaryStatus string  `json:"summary_status"`
+	Summary       *string `json:"summary,omitempty"`
+	ExtractedText string  `json:"extracted_text,omitempty"`
+}
+
+func toResponse(doc domain.Document, includeText bool) DocumentResponse {
+	resp := DocumentResponse{
 		DocumentID:       doc.DocumentID,
 		Filename:         doc.Metadata.Filename,
 		MimeType:         doc.Metadata.MimeType,
 		Checksum:         doc.Checksum,
 		DeliveryStatus:   deliveryAvailable,
 		SummaryStatus:    string(doc.SummaryStatus),
-		ExtractedText:    doc.ExtractedText,
-		Summary:          doc.Summary,
 		Metadata:         doc.Metadata,
 		ExtractionTimeMS: doc.ExtractionTimeMS,
 		SummaryTimeMS:    summaryTimeMS(doc),
@@ -59,6 +67,11 @@ func toResponse(doc domain.Document) DocumentResponse {
 		UpdatedAt:        doc.UpdatedAt,
 		DeletedAt:        doc.DeletedAt,
 	}
+	if includeText {
+		resp.ExtractedText = doc.ExtractedText
+		resp.Summary = doc.Summary
+	}
+	return resp
 }
 
 func summaryTimeMS(doc domain.Document) *int64 {
@@ -68,10 +81,10 @@ func summaryTimeMS(doc domain.Document) *int64 {
 	return &doc.SummaryTimeMS
 }
 
-func listResponse(items []domain.Document, total int64, page, pageSize int) ListResponse {
+func listResponse(items []domain.Document, total int64, page, pageSize int, includeText bool) ListResponse {
 	resp := make([]DocumentResponse, len(items))
 	for i, doc := range items {
-		resp[i] = toResponse(doc)
+		resp[i] = toResponse(doc, includeText)
 	}
 	return ListResponse{Items: resp, Total: total, Page: page, PageSize: pageSize}
 }

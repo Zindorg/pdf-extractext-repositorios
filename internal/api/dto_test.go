@@ -13,7 +13,7 @@ import (
 func TestToResponse(t *testing.T) {
 	doc := testutil.CompleteDoc()
 
-	got := toResponse(doc)
+	got := toResponse(doc, true)
 
 	require.Equal(t, "doc-1", got.DocumentID)
 	require.Equal(t, "abc", got.Checksum)
@@ -28,7 +28,7 @@ func TestToResponse(t *testing.T) {
 }
 
 func TestToResponse_NilSummary(t *testing.T) {
-	got := toResponse(domain.Document{})
+	got := toResponse(domain.Document{}, true)
 
 	require.Nil(t, got.Summary)
 	require.Equal(t, "", got.SummaryStatus)
@@ -44,7 +44,7 @@ func TestToResponse_DeliveryFilenameAndMimeType(t *testing.T) {
 		},
 	}
 
-	raw, err := json.Marshal(toResponse(doc))
+	raw, err := json.Marshal(toResponse(doc, true))
 	require.NoError(t, err)
 	var got map[string]any
 	require.NoError(t, json.Unmarshal(raw, &got))
@@ -72,21 +72,20 @@ func TestToResponse_TimingsAndDeletedAt(t *testing.T) {
 	require.NotNil(t, got["deleted_at"])
 }
 
-func TestToResponse_NoSummaryKeepsNullableFieldsPresent(t *testing.T) {
+func TestToResponse_NoSummaryOmitsNullableFields(t *testing.T) {
 	got := marshalResponse(t, domain.Document{DocumentID: "doc-1", ExtractionTimeMS: 342})
 
 	require.Equal(t, float64(342), got["extraction_time_ms"])
-	summaryTime, ok := got["summary_time_ms"]
-	require.True(t, ok, "summary_time_ms debe estar presente y ser null")
-	require.Nil(t, summaryTime)
-	deleted, ok := got["deleted_at"]
-	require.True(t, ok, "deleted_at debe estar presente y ser null")
-	require.Nil(t, deleted)
+	// summary_time_ms y deleted_at se omiten (omitempty) cuando son nil
+	_, hasSummaryTime := got["summary_time_ms"]
+	require.False(t, hasSummaryTime)
+	_, hasDeletedAt := got["deleted_at"]
+	require.False(t, hasDeletedAt)
 }
 
 func marshalResponse(t *testing.T, doc domain.Document) map[string]any {
 	t.Helper()
-	raw, err := json.Marshal(toResponse(doc))
+	raw, err := json.Marshal(toResponse(doc, true))
 	require.NoError(t, err)
 	var got map[string]any
 	require.NoError(t, json.Unmarshal(raw, &got))

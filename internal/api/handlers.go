@@ -41,7 +41,7 @@ func (h *DocumentHandler) GetByDocumentID(c *gin.Context) {
 		abortWithError(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, toResponse(*doc))
+	c.JSON(http.StatusOK, toResponse(*doc, true))
 }
 
 func (h *DocumentHandler) GetByChecksum(c *gin.Context) {
@@ -50,7 +50,21 @@ func (h *DocumentHandler) GetByChecksum(c *gin.Context) {
 		abortWithError(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, toResponse(*doc))
+	includeText := true
+	if it := c.Query("include_text"); it != "" {
+		includeText = it == "true"
+	}
+	c.JSON(http.StatusOK, ChecksumResponse{
+		DocumentID:    doc.DocumentID,
+		SummaryStatus: string(doc.SummaryStatus),
+		Summary:       doc.Summary,
+		ExtractedText: func() string {
+			if includeText {
+				return doc.ExtractedText
+			}
+			return ""
+		}(),
+	})
 }
 
 func (h *DocumentHandler) List(c *gin.Context) {
@@ -73,7 +87,11 @@ func (h *DocumentHandler) List(c *gin.Context) {
 		abortWithError(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, listResponse(items, total, page, pageSize))
+	includeText := true
+	if filter.IncludeText != nil {
+		includeText = *filter.IncludeText
+	}
+	c.JSON(http.StatusOK, listResponse(items, total, page, pageSize, includeText))
 }
 
 func (h *DocumentHandler) DownloadOriginal(c *gin.Context) {

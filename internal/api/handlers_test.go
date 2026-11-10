@@ -2,6 +2,7 @@ package api_test
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/url"
 	"testing"
@@ -55,13 +56,18 @@ func TestHandler_GetByChecksum_OK(t *testing.T) {
 	router, svc := newTestRouter()
 	seedPending(t, svc, "doc-1", "chk-1", "texto")
 
-	got, raw := documentResponse(t, router, "/api/v1/documents/checksum/chk-1")
+	rr := testutil.DoGet(t, router, "/api/v1/documents/checksum/chk-1")
+	require.Equal(t, http.StatusOK, rr.Code)
 
-	require.Equal(t, "doc-1", got.DocumentID)
-	require.Equal(t, float64(342), raw["extraction_time_ms"])
-	summaryTime, ok := raw["summary_time_ms"]
-	require.True(t, ok, "summary_time_ms debe estar presente y ser null")
-	require.Nil(t, summaryTime)
+	var raw map[string]any
+	require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &raw))
+
+	require.Equal(t, "doc-1", raw["document_id"])
+	require.Equal(t, "PENDING", raw["summary_status"])
+	require.Nil(t, raw["summary"])
+	// extraction_time_ms no se incluye en la respuesta de checksum
+	_, hasExtractionTime := raw["extraction_time_ms"]
+	require.False(t, hasExtractionTime)
 }
 
 func TestHandler_GetByChecksum_NotFound(t *testing.T) {
