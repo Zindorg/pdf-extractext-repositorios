@@ -26,6 +26,7 @@ const (
 	defaultRateLimitBurst  = 200
 	defaultCBFailures      = 5
 	defaultCBTimeout       = 30 * time.Second
+	defaultCacheTTL        = 60 * time.Second
 )
 
 type Config struct {
@@ -45,6 +46,7 @@ type Config struct {
 	RateLimitBurst  int
 	CBFailures      int
 	CBTimeout       time.Duration
+	CacheTTL        time.Duration
 }
 
 // LogLevelParsed returns the parsed slog.Level from LogLevel.
@@ -109,6 +111,9 @@ func loadNumbers(cfg *Config) error {
 	}
 	if cfg.CBTimeout, err = envParse("CB_TIMEOUT", defaultCBTimeout, "duration", time.ParseDuration); err != nil {
 		return fmt.Errorf("CB_TIMEOUT: %w", err)
+	}
+	if cfg.CacheTTL, err = envParse("CACHE_TTL", defaultCacheTTL, "duration", time.ParseDuration); err != nil {
+		return fmt.Errorf("CACHE_TTL: %w", err)
 	}
 	return nil
 }
