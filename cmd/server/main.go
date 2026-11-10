@@ -16,6 +16,7 @@ import (
 	"github.com/marco/pdf-extractext-repositorios/internal/api"
 	"github.com/marco/pdf-extractext-repositorios/internal/application"
 	"github.com/marco/pdf-extractext-repositorios/internal/config"
+	"github.com/marco/pdf-extractext-repositorios/internal/domain"
 	"github.com/marco/pdf-extractext-repositorios/internal/logging"
 	"github.com/redis/go-redis/v9"
 	"go.mongodb.org/mongo-driver/v2/mongo"
@@ -64,7 +65,7 @@ func run(cfg *config.Config) error {
 type infra struct {
 	mongo *mongo.Client
 	redis *redis.Client
-	repo  *mongodb.MongoDocumentRepository
+	repo  domain.DocumentRepository
 }
 
 func (i *infra) close() {
@@ -74,7 +75,7 @@ func (i *infra) close() {
 
 // startInfra conecta Mongo (ping + índices) y Redis (ping).
 func startInfra(ctx context.Context, cfg *config.Config) (*infra, error) {
-	mongoClient, repo, err := startMongo(ctx, cfg.MongoDBURI, cfg.MongoDBDatabase)
+	mongoClient, repo, err := startMongo(ctx, cfg.MongoDBURI, cfg.MongoDBDatabase, cfg)
 	if err != nil {
 		return nil, err
 	}
@@ -88,7 +89,7 @@ func startInfra(ctx context.Context, cfg *config.Config) (*infra, error) {
 
 // startMongo conecta, verifica tempranamente (si Mongo no responde, no
 // arrancamos) y prepara los índices. El dueño del cliente es el caller.
-func startMongo(ctx context.Context, uri, dbName string) (*mongo.Client, *mongodb.MongoDocumentRepository, error) {
+func startMongo(ctx context.Context, uri, dbName string, cfg *config.Config) (*mongo.Client, domain.DocumentRepository, error) {
 	client, err := mongo.Connect(options.Client().ApplyURI(uri))
 	if err != nil {
 		return nil, nil, fmt.Errorf("mongo connect: %w", err)
@@ -99,13 +100,17 @@ func startMongo(ctx context.Context, uri, dbName string) (*mongo.Client, *mongod
 		_ = client.Disconnect(context.Background())
 		return nil, nil, fmt.Errorf("mongo ping: %w", err)
 	}
-	repo := mongodb.NewMongoDocumentRepository(client.Database(dbName))
+	baseRepo := mongodb.NewMongoDocumentRepository(client.Database(dbName))
 	idxCtx, idxCancel := context.WithTimeout(ctx, startupTimeout)
 	defer idxCancel()
-	if err := repo.EnsureIndexes(idxCtx); err != nil {
+	if err := baseRepo.EnsureIndexes(idxCtx); err != nil {
 		_ = client.Disconnect(context.Background())
 		return nil, nil, fmt.Errorf("mongo indexes: %w", err)
 	}
+
+	cb := mongodb.NewCircuitBreaker(cfg.CBFailures, 2, cfg.CBTimeout)
+	repo := mongodb.NewCircuitBreakerRepository(baseRepo, cb)
+
 	return client, repo, nil
 }
 
@@ -171,7 +176,7 @@ func newServer(cfg *config.Config, service *application.DocumentService, inf *in
 	handler := api.NewDocumentHandler(service, health.NewPinger(inf.mongo, inf.redis))
 	return &http.Server{
 		Addr:              ":" + cfg.HTTPPort,
-		Handler:           api.NewRouter(handler),
+		Handler:           api.NewRouter(handler, cfg.RateLimitRPS, cfg.RateLimitBurst),
 		ReadHeaderTimeout: readHeaderTimeout,
 	}
 }
