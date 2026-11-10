@@ -43,6 +43,8 @@ func (r *MongoDocumentRepository) restoreConflictCheck(ctx context.Context, docu
 }
 
 // clearDeletedAt limpia el campo deleted_at (restaura) con su marca en updated_at.
+// Si el update dispara 11000 en uq_checksum_active (otra réplica ocupó el
+// checksum tras el check), se traduce a ErrRestoreConflict → 409.
 func (r *MongoDocumentRepository) clearDeletedAt(ctx context.Context, documentID string) error {
 	filter := bson.M{"document_id": documentID}
 	update := bson.M{
@@ -51,6 +53,9 @@ func (r *MongoDocumentRepository) clearDeletedAt(ctx context.Context, documentID
 	}
 	res, err := r.collection.UpdateOne(ctx, filter, update)
 	if err != nil {
+		if mapped := mapWriteError(err); errors.Is(mapped, domain.ErrDuplicateChecksum) {
+			return domain.ErrRestoreConflict
+		}
 		return err
 	}
 	if res.MatchedCount == 0 {

@@ -8,10 +8,10 @@ import (
 	"go.mongodb.org/mongo-driver/v2/mongo"
 )
 
-// mapInsertError traduce un error de escritura de Mongo a los errores del
-// dominio. La garantía fuerte de dedup vive en los índices únicos
-// (uq_document_id y uq_checksum_active); acá solo se clasifica el 11000.
-func mapInsertError(err error) error {
+// mapWriteError traduce un error de escritura de Mongo (insert o update)
+// a los errores del dominio. La garantía fuerte de dedup vive en los índices
+// únicos (uq_document_id y uq_checksum_active); acá solo se clasifica el 11000.
+func mapWriteError(err error) error {
 	if !mongo.IsDuplicateKeyError(err) {
 		return err
 	}

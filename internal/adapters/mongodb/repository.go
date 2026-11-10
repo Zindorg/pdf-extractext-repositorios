@@ -28,7 +28,7 @@ func (r *MongoDocumentRepository) Insert(ctx context.Context, doc domain.Documen
 	persisted := toPersisted(doc)
 	persisted.ID = bson.NewObjectID() // el driver no genera _id si el campo viene en cero
 	if _, err := r.collection.InsertOne(ctx, persisted); err != nil {
-		return mapInsertError(err)
+		return mapWriteError(err)
 	}
 	return nil
 }
