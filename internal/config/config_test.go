@@ -1,6 +1,8 @@
 package config_test
 
 import (
+	"fmt"
+	"os"
 	"testing"
 	"time"
 
@@ -20,6 +22,7 @@ func TestLoadWithDefaults(t *testing.T) {
 	t.Setenv("RETRY_BACKOFF", "")
 	t.Setenv("MAX_TEXT_BYTES", "")
 	t.Setenv("LOG_LEVEL", "")
+	t.Setenv("CONSUMER_NAME", "")
 
 	cfg, err := config.Load()
 	require.NoError(t, err)
@@ -34,6 +37,8 @@ func TestLoadWithDefaults(t *testing.T) {
 	require.Equal(t, 5*time.Second, cfg.RetryBackoff)
 	require.Equal(t, int64(15<<20), cfg.MaxTextBytes)
 	require.Equal(t, "info", cfg.LogLevel)
+	require.NotEmpty(t, cfg.ConsumerName)
+	require.Contains(t, cfg.ConsumerName, "-")
 }
 
 func TestLoadFromEnv(t *testing.T) {
@@ -48,6 +53,7 @@ func TestLoadFromEnv(t *testing.T) {
 	t.Setenv("RETRY_BACKOFF", "2s")
 	t.Setenv("MAX_TEXT_BYTES", "1048576")
 	t.Setenv("LOG_LEVEL", "debug")
+	t.Setenv("CONSUMER_NAME", "mi-consumer")
 
 	cfg, err := config.Load()
 	require.NoError(t, err)
@@ -63,6 +69,22 @@ func TestLoadFromEnv(t *testing.T) {
 	require.Equal(t, 2*time.Second, cfg.RetryBackoff)
 	require.Equal(t, int64(1048576), cfg.MaxTextBytes)
 	require.Equal(t, "debug", cfg.LogLevel)
+	require.Equal(t, "mi-consumer", cfg.ConsumerName)
+}
+
+func TestLoad_ConsumerName_DefaultFormat(t *testing.T) {
+	host, _ := os.Hostname()
+	if host == "" {
+		host = "persister"
+	}
+	expected := fmt.Sprintf("%s-%d", host, os.Getpid())
+
+	t.Setenv("CONSUMER_NAME", "")
+
+	cfg, err := config.Load()
+	require.NoError(t, err)
+
+	require.Equal(t, expected, cfg.ConsumerName)
 }
 
 func TestLoadInvalidRetryMax(t *testing.T) {

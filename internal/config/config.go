@@ -32,6 +32,7 @@ type Config struct {
 	StreamName      string
 	StreamGroup     string
 	DLQName         string
+	ConsumerName    string
 	RetryMax        int
 	RetryBackoff    time.Duration
 	MaxTextBytes    int64
@@ -48,11 +49,17 @@ func Load() (*Config, error) {
 	if err := loadNumbers(cfg); err != nil {
 		return nil, err
 	}
-	// Validate LOG_LEVEL
-	if cfg.LogLevel != "" {
-		_ = cfg.LogLevelParsed() // will use default if invalid
-	}
 	return cfg, nil
+}
+
+// defaultConsumerName genera un identificador único por instancia para
+// XREADGROUP/XAUTOCLAIM: hostname-pid permite réplicas horizontales.
+func defaultConsumerName() string {
+	host, err := os.Hostname()
+	if err != nil || host == "" {
+		host = "persister"
+	}
+	return fmt.Sprintf("%s-%d", host, os.Getpid())
 }
 
 // stringConfig monta el bloque de variables de texto con sus defaults.
@@ -65,6 +72,7 @@ func stringConfig() *Config {
 		StreamName:      env("STREAM_NAME", defaultStreamName),
 		StreamGroup:     env("STREAM_GROUP", defaultStreamGroup),
 		DLQName:         env("DLQ_NAME", defaultDLQName),
+		ConsumerName:    env("CONSUMER_NAME", defaultConsumerName()),
 		LogLevel:        env("LOG_LEVEL", defaultLogLevel),
 	}
 }
