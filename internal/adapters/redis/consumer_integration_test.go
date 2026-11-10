@@ -83,6 +83,38 @@ func pendingLen(t *testing.T, client *redis.Client, consumer *StreamConsumer) in
 	return pending.Count
 }
 
+// consumeOnce procesa un lote del stream.
+func consumeOnce(t *testing.T, consumer *StreamConsumer) {
+	t.Helper()
+	require.NoError(t, consumer.consume(context.Background()))
+}
+
+// dlqEntries devuelve las entradas de la DLQ del consumer.
+func dlqEntries(t *testing.T, client *redis.Client, consumer *StreamConsumer) []redis.XMessage {
+	t.Helper()
+	entries, err := client.XRange(context.Background(), consumer.dlqName, "-", "+").Result()
+	require.NoError(t, err)
+	return entries
+}
+
+// requireDLQ verifica que el mensaje fallido está en la DLQ con el error esperado.
+func requireDLQ(t *testing.T, client *redis.Client, consumer *StreamConsumer, errMsg string) {
+	t.Helper()
+	entries := dlqEntries(t, client, consumer)
+	require.Len(t, entries, 1)
+	require.Contains(t, entries[0].Values["error"], errMsg)
+}
+
+// ingest publica el payload, consume un lote y devuelve el documento persistido.
+func ingest(t *testing.T, client *redis.Client, consumer *StreamConsumer, repo *testutil.MemoryRepository, payload string) domain.Document {
+	t.Helper()
+	publish(t, client, consumer, payload)
+	consumeOnce(t, consumer)
+	doc, err := repo.FindByDocumentID(context.Background(), documentIDOf(t, payload))
+	require.NoError(t, err)
+	return *doc
+}
+
 const integOriginal = `{
 	"event_type": "original",
 	"schema_version": 1,
@@ -100,11 +132,8 @@ const integOriginal = `{
 func TestConsumer_Integration_Original_CreatesPendingAndAcks(t *testing.T) {
 	consumer, client, repo := newIntegrationConsumer(t, 5, 50*time.Millisecond, integMaxText)
 
-	publish(t, client, consumer, integOriginal)
-	require.NoError(t, consumer.consume(context.Background()))
+	doc := ingest(t, client, consumer, repo, integOriginal)
 
-	doc, err := repo.FindByDocumentID(context.Background(), "doc-1")
-	require.NoError(t, err)
 	require.Equal(t, domain.SummaryPending, doc.SummaryStatus)
 	require.Equal(t, int64(342), doc.ExtractionTimeMS)
 	require.Equal(t, "application/pdf", doc.Metadata.MimeType)
@@ -113,12 +142,10 @@ func TestConsumer_Integration_Original_CreatesPendingAndAcks(t *testing.T) {
 }
 
 func TestConsumer_Integration_Original_Duplicate_AcksAndDiscards(t *testing.T) {
-	consumer, client, _ := newIntegrationConsumer(t, 5, 50*time.Millisecond, integMaxText)
+	consumer, client, repo := newIntegrationConsumer(t, 5, 50*time.Millisecond, integMaxText)
 
-	publish(t, client, consumer, integOriginal)
-	require.NoError(t, consumer.consume(context.Background()))
-	publish(t, client, consumer, integOriginal)
-	require.NoError(t, consumer.consume(context.Background()))
+	ingest(t, client, consumer, repo, integOriginal)
+	ingest(t, client, consumer, repo, integOriginal)
 
 	require.Zero(t, pendingLen(t, client, consumer))
 }
@@ -126,23 +153,16 @@ func TestConsumer_Integration_Original_Duplicate_AcksAndDiscards(t *testing.T) {
 func TestConsumer_Integration_SummaryResolved_Completes(t *testing.T) {
 	consumer, client, repo := newIntegrationConsumer(t, 5, 50*time.Millisecond, integMaxText)
 
-	publish(t, client, consumer, integOriginal)
-	require.NoError(t, consumer.consume(context.Background()))
-
-	publish(t, client, consumer, `{
+	ingest(t, client, consumer, repo, integOriginal)
+	doc := ingest(t, client, consumer, repo, `{
 		"event_type": "summary_resolved",
 		"schema_version": 1,
 		"document_id": "doc-1",
 		"summary": "resumen",
 		"summary_time_ms": 120
 	}`)
-	require.NoError(t, consumer.consume(context.Background()))
 
-	doc, err := repo.FindByDocumentID(context.Background(), "doc-1")
-	require.NoError(t, err)
-	require.Equal(t, domain.SummaryResolved, doc.SummaryStatus)
-	require.Equal(t, "resumen", *doc.Summary)
-	require.Equal(t, int64(120), doc.SummaryTimeMS)
+	testutil.RequireSummaryResolved(t, doc, "resumen", 120)
 	require.Zero(t, pendingLen(t, client, consumer))
 }
 
@@ -157,13 +177,10 @@ func TestConsumer_Integration_OrphanSummary_GoesToDLQ(t *testing.T) {
 		"summary_time_ms": 5
 	}`)
 
-	require.NoError(t, consumer.consume(context.Background()))
+	consumeOnce(t, consumer)
 
 	require.Zero(t, pendingLen(t, client, consumer))
-	entries, err := client.XRange(context.Background(), consumer.dlqName, "-", "+").Result()
-	require.NoError(t, err)
-	require.Len(t, entries, 1)
-	require.Contains(t, entries[0].Values["error"], "document not found")
+	requireDLQ(t, client, consumer, "document not found")
 }
 
 func TestConsumer_Integration_InvalidEvent_RetriesThenDLQ(t *testing.T) {
@@ -179,15 +196,14 @@ func TestConsumer_Integration_InvalidEvent_RetriesThenDLQ(t *testing.T) {
 		"metadata": {"filename": "x.pdf"}
 	}`)
 
-	require.NoError(t, consumer.consume(context.Background()))
+	consumeOnce(t, consumer)
 	require.Equal(t, int64(1), pendingLen(t, client, consumer))
 
 	time.Sleep(200 * time.Millisecond)
-	require.NoError(t, consumer.consume(context.Background()))
+	consumeOnce(t, consumer)
 
 	require.Zero(t, pendingLen(t, client, consumer))
-	entries, err := client.XRange(context.Background(), consumer.dlqName, "-", "+").Result()
-	require.NoError(t, err)
+	entries := dlqEntries(t, client, consumer)
 	require.Len(t, entries, 1)
 	require.Equal(t, "2", entries[0].Values["attempts"])
 }
@@ -197,7 +213,7 @@ func TestConsumer_Integration_InvalidJSON_GoesToDLQ(t *testing.T) {
 
 	publish(t, client, consumer, "{no válido")
 
-	require.NoError(t, consumer.consume(context.Background()))
+	consumeOnce(t, consumer)
 
 	require.Zero(t, pendingLen(t, client, consumer))
 }
@@ -215,13 +231,10 @@ func TestConsumer_Integration_Original_TooLarge_GoesToDLQ(t *testing.T) {
 		"metadata": {"filename": "x.pdf"}
 	}`)
 
-	require.NoError(t, consumer.consume(context.Background()))
+	consumeOnce(t, consumer)
 
 	require.Zero(t, pendingLen(t, client, consumer))
-	entries, err := client.XRange(context.Background(), consumer.dlqName, "-", "+").Result()
-	require.NoError(t, err)
-	require.Len(t, entries, 1)
-	require.Contains(t, entries[0].Values["error"], "extracted text too large")
+	requireDLQ(t, client, consumer, "extracted text too large")
 }
 
 func TestConsumer_Integration_Run_StopsOnCancel(t *testing.T) {

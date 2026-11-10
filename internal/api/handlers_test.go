@@ -4,9 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
-	"net/http/httptest"
 	"net/url"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/marco/pdf-extractext-repositorios/internal/api"
@@ -21,8 +21,7 @@ import (
 func newTestRouter() (*gin.Engine, *application.DocumentService) {
 	repo := testutil.NewMemoryRepository()
 	service := application.NewDocumentService(repo)
-	handler := api.NewDocumentHandler(service, healthy{})
-	return api.NewRouter(handler), service
+	return newRouter(service, healthy{}), service
 }
 
 // seedPending inserta un documento PENDING vía el servicio.
@@ -34,12 +33,10 @@ func seedPending(t *testing.T, svc *application.DocumentService, id, checksum, t
 // seedWithStatus inserta un documento con el estado de resumen indicado vía el servicio.
 func seedWithStatus(t *testing.T, svc *application.DocumentService, id, checksum, text string, status domain.SummaryStatus) {
 	t.Helper()
-	_, err := svc.CreatePending(context.Background(), domain.Document{
-		DocumentID: id, Checksum: checksum, ExtractedText: text,
-		SummaryStatus:    status,
-		Metadata:         domain.Metadata{Filename: "mi archivo.pdf", MimeType: "application/pdf"},
-		ExtractionTimeMS: 342,
-	})
+	doc := testutil.NewDoc(id, "mi archivo.pdf", checksum, status, time.Now().UTC())
+	doc.ExtractedText = text
+	doc.ExtractionTimeMS = 342
+	_, err := svc.CreatePending(context.Background(), doc)
 	require.NoError(t, err)
 }
 
@@ -51,23 +48,12 @@ func seedCompleted(t *testing.T, svc *application.DocumentService, id, checksum,
 	require.NoError(t, err)
 }
 
-func doGet(t *testing.T, router *gin.Engine, path string) *httptest.ResponseRecorder {
-	t.Helper()
-	req := httptest.NewRequest(http.MethodGet, path, nil)
-	rr := httptest.NewRecorder()
-	router.ServeHTTP(rr, req)
-	return rr
-}
-
 func TestHandler_GetByDocumentID_OK(t *testing.T) {
 	router, svc := newTestRouter()
 	seedCompleted(t, svc, "doc-1", "chk-1", "texto extraido", "resumen")
 
-	rr := doGet(t, router, "/api/v1/documents/doc-1")
-	require.Equal(t, http.StatusOK, rr.Code)
+	got, raw := documentResponse(t, router, "/api/v1/documents/doc-1")
 
-	var got api.DocumentResponse
-	require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &got))
 	require.Equal(t, "doc-1", got.DocumentID)
 	require.Equal(t, "chk-1", got.Checksum)
 	require.Equal(t, string(domain.SummaryResolved), got.SummaryStatus)
@@ -76,8 +62,6 @@ func TestHandler_GetByDocumentID_OK(t *testing.T) {
 	require.Equal(t, int64(462), got.ProcessingTimeMS)
 	require.Equal(t, "mi archivo.pdf", got.Metadata.Filename)
 
-	var raw map[string]any
-	require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &raw))
 	require.Equal(t, "AVAILABLE", raw["delivery_status"])
 	require.Equal(t, "mi archivo.pdf", raw["filename"])
 	require.Equal(t, "application/pdf", raw["mime_type"])
@@ -88,9 +72,10 @@ func TestHandler_GetByDocumentID_OK(t *testing.T) {
 func TestHandler_GetByDocumentID_NotFound(t *testing.T) {
 	router, _ := newTestRouter()
 
-	rr := doGet(t, router, "/api/v1/documents/no-existe")
+	rr := testutil.DoGet(t, router, "/api/v1/documents/no-existe")
+
 	require.Equal(t, http.StatusNotFound, rr.Code)
-	require.JSONEq(t, `{"code":"document_not_found","message":"document not found"}`, rr.Body.String())
+	requireErrorBody(t, rr, "document_not_found", "document not found")
 }
 
 func TestHandler_GetByDocumentID_SoftDeleted_IsNotFound(t *testing.T) {
@@ -98,7 +83,8 @@ func TestHandler_GetByDocumentID_SoftDeleted_IsNotFound(t *testing.T) {
 	seedCompleted(t, svc, "doc-1", "chk-1", "texto", "resumen")
 	require.NoError(t, svc.SoftDelete(context.Background(), "doc-1"))
 
-	rr := doGet(t, router, "/api/v1/documents/doc-1")
+	rr := testutil.DoGet(t, router, "/api/v1/documents/doc-1")
+
 	require.Equal(t, http.StatusNotFound, rr.Code)
 }
 
@@ -106,15 +92,9 @@ func TestHandler_GetByChecksum_OK(t *testing.T) {
 	router, svc := newTestRouter()
 	seedPending(t, svc, "doc-1", "chk-1", "texto")
 
-	rr := doGet(t, router, "/api/v1/documents/checksum/chk-1")
-	require.Equal(t, http.StatusOK, rr.Code)
+	got, raw := documentResponse(t, router, "/api/v1/documents/checksum/chk-1")
 
-	var got api.DocumentResponse
-	require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &got))
 	require.Equal(t, "doc-1", got.DocumentID)
-
-	var raw map[string]any
-	require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &raw))
 	require.Equal(t, float64(342), raw["extraction_time_ms"])
 	summaryTime, ok := raw["summary_time_ms"]
 	require.True(t, ok, "summary_time_ms debe estar presente y ser null")
@@ -124,7 +104,8 @@ func TestHandler_GetByChecksum_OK(t *testing.T) {
 func TestHandler_GetByChecksum_NotFound(t *testing.T) {
 	router, _ := newTestRouter()
 
-	rr := doGet(t, router, "/api/v1/documents/checksum/no-existe")
+	rr := testutil.DoGet(t, router, "/api/v1/documents/checksum/no-existe")
+
 	require.Equal(t, http.StatusNotFound, rr.Code)
 }
 
@@ -135,7 +116,7 @@ func TestHandler_List_OK_PaginationAndFilters(t *testing.T) {
 	seedCompleted(t, svc, "doc-3", "chk-3", "c", "resumen 3")
 	require.NoError(t, svc.SoftDelete(context.Background(), "doc-3"))
 
-	rr := doGet(t, router, "/api/v1/documents")
+	rr := testutil.DoGet(t, router, "/api/v1/documents")
 	require.Equal(t, http.StatusOK, rr.Code)
 	var all api.ListResponse
 	require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &all))
@@ -144,7 +125,7 @@ func TestHandler_List_OK_PaginationAndFilters(t *testing.T) {
 	require.Equal(t, 1, all.Page)
 	require.Equal(t, 20, all.PageSize)
 
-	rr = doGet(t, router, "/api/v1/documents?status=RESOLVED")
+	rr = testutil.DoGet(t, router, "/api/v1/documents?status=RESOLVED")
 	require.Equal(t, http.StatusOK, rr.Code)
 	var resolved api.ListResponse
 	require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &resolved))
@@ -152,7 +133,7 @@ func TestHandler_List_OK_PaginationAndFilters(t *testing.T) {
 	require.Equal(t, "doc-1", resolved.Items[0].DocumentID)
 	require.Equal(t, int64(1), resolved.Total)
 
-	rr = doGet(t, router, "/api/v1/documents?page=2&page_size=1")
+	rr = testutil.DoGet(t, router, "/api/v1/documents?page=2&page_size=1")
 	require.Equal(t, http.StatusOK, rr.Code)
 	var paged api.ListResponse
 	require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &paged))
@@ -168,7 +149,7 @@ func TestHandler_List_FilterBySummaryStatus(t *testing.T) {
 	seedWithStatus(t, svc, "doc-3", "chk-3", "c", domain.SummaryNotRequested)
 	seedWithStatus(t, svc, "doc-4", "chk-4", "d", domain.SummaryFailed)
 
-	rr := doGet(t, router, "/api/v1/documents?status=PENDING")
+	rr := testutil.DoGet(t, router, "/api/v1/documents?status=PENDING")
 	require.Equal(t, http.StatusOK, rr.Code)
 	var pending api.ListResponse
 	require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &pending))
@@ -176,7 +157,7 @@ func TestHandler_List_FilterBySummaryStatus(t *testing.T) {
 	require.Equal(t, "doc-2", pending.Items[0].DocumentID)
 	require.Equal(t, int64(1), pending.Total)
 
-	rr = doGet(t, router, "/api/v1/documents?status=NOT_REQUESTED")
+	rr = testutil.DoGet(t, router, "/api/v1/documents?status=NOT_REQUESTED")
 	require.Equal(t, http.StatusOK, rr.Code)
 	var notreq api.ListResponse
 	require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &notreq))
@@ -184,7 +165,7 @@ func TestHandler_List_FilterBySummaryStatus(t *testing.T) {
 	require.Equal(t, "doc-3", notreq.Items[0].DocumentID)
 	require.Equal(t, int64(1), notreq.Total)
 
-	rr = doGet(t, router, "/api/v1/documents?status=FAILED")
+	rr = testutil.DoGet(t, router, "/api/v1/documents?status=FAILED")
 	require.Equal(t, http.StatusOK, rr.Code)
 	var failed api.ListResponse
 	require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &failed))
@@ -195,24 +176,27 @@ func TestHandler_List_FilterBySummaryStatus(t *testing.T) {
 func TestHandler_List_InvalidStatus_BadRequest(t *testing.T) {
 	router, _ := newTestRouter()
 
-	rr := doGet(t, router, "/api/v1/documents?status=HECHO")
+	rr := testutil.DoGet(t, router, "/api/v1/documents?status=HECHO")
+
 	require.Equal(t, http.StatusBadRequest, rr.Code)
-	require.JSONEq(t, `{"code":"invalid_request","message":"invalid status"}`, rr.Body.String())
+	requireErrorBody(t, rr, "invalid_request", "invalid status")
 }
 
 func TestHandler_List_InvalidCreatedFrom_BadRequest(t *testing.T) {
 	router, _ := newTestRouter()
 
-	rr := doGet(t, router, "/api/v1/documents?created_from=no-es-fecha")
+	rr := testutil.DoGet(t, router, "/api/v1/documents?created_from=no-es-fecha")
+
 	require.Equal(t, http.StatusBadRequest, rr.Code)
-	require.JSONEq(t, `{"code":"invalid_request","message":"invalid created_from"}`, rr.Body.String())
+	requireErrorBody(t, rr, "invalid_request", "invalid created_from")
 }
 
 func TestHandler_DownloadOriginal_OK(t *testing.T) {
 	router, svc := newTestRouter()
 	seedCompleted(t, svc, "doc-1", "chk-1", "texto extraido", "resumen")
 
-	rr := doGet(t, router, "/api/v1/documents/doc-1/download/original")
+	rr := testutil.DoGet(t, router, "/api/v1/documents/doc-1/download/original")
+
 	require.Equal(t, http.StatusOK, rr.Code)
 	require.Equal(t, "texto extraido", rr.Body.String())
 	require.Contains(t, rr.Header().Get("Content-Type"), "text/plain")
@@ -223,7 +207,8 @@ func TestHandler_DownloadOriginal_OK(t *testing.T) {
 func TestHandler_DownloadOriginal_NotFound(t *testing.T) {
 	router, _ := newTestRouter()
 
-	rr := doGet(t, router, "/api/v1/documents/no-existe/download/original")
+	rr := testutil.DoGet(t, router, "/api/v1/documents/no-existe/download/original")
+
 	require.Equal(t, http.StatusNotFound, rr.Code)
 }
 
@@ -231,7 +216,8 @@ func TestHandler_DownloadSummary_OK(t *testing.T) {
 	router, svc := newTestRouter()
 	seedCompleted(t, svc, "doc-1", "chk-1", "texto", "resumen final")
 
-	rr := doGet(t, router, "/api/v1/documents/doc-1/download/summary")
+	rr := testutil.DoGet(t, router, "/api/v1/documents/doc-1/download/summary")
+
 	require.Equal(t, http.StatusOK, rr.Code)
 	require.Equal(t, "resumen final", rr.Body.String())
 	require.Contains(t, rr.Header().Get("Content-Type"), "text/plain")
@@ -243,32 +229,36 @@ func TestHandler_DownloadSummary_Pending_Conflict(t *testing.T) {
 	router, svc := newTestRouter()
 	seedPending(t, svc, "doc-1", "chk-1", "texto")
 
-	rr := doGet(t, router, "/api/v1/documents/doc-1/download/summary")
+	rr := testutil.DoGet(t, router, "/api/v1/documents/doc-1/download/summary")
+
 	require.Equal(t, http.StatusConflict, rr.Code)
-	require.JSONEq(t, `{"code":"summary_pending","message":"summary not ready"}`, rr.Body.String())
+	requireErrorBody(t, rr, "summary_pending", "summary not ready")
 }
 
 func TestHandler_DownloadSummary_NotRequested_NotFound(t *testing.T) {
 	router, svc := newTestRouter()
 	seedWithStatus(t, svc, "doc-1", "chk-1", "texto", domain.SummaryNotRequested)
 
-	rr := doGet(t, router, "/api/v1/documents/doc-1/download/summary")
+	rr := testutil.DoGet(t, router, "/api/v1/documents/doc-1/download/summary")
+
 	require.Equal(t, http.StatusNotFound, rr.Code)
-	require.JSONEq(t, `{"code":"summary_not_available","message":"summary not available"}`, rr.Body.String())
+	requireErrorBody(t, rr, "summary_not_available", "summary not available")
 }
 
 func TestHandler_DownloadSummary_Failed_NotFound(t *testing.T) {
 	router, svc := newTestRouter()
 	seedWithStatus(t, svc, "doc-1", "chk-1", "texto", domain.SummaryFailed)
 
-	rr := doGet(t, router, "/api/v1/documents/doc-1/download/summary")
+	rr := testutil.DoGet(t, router, "/api/v1/documents/doc-1/download/summary")
+
 	require.Equal(t, http.StatusNotFound, rr.Code)
-	require.JSONEq(t, `{"code":"summary_not_available","message":"summary not available"}`, rr.Body.String())
+	requireErrorBody(t, rr, "summary_not_available", "summary not available")
 }
 
 func TestHandler_DownloadSummary_NotFound(t *testing.T) {
 	router, _ := newTestRouter()
 
-	rr := doGet(t, router, "/api/v1/documents/no-existe/download/summary")
+	rr := testutil.DoGet(t, router, "/api/v1/documents/no-existe/download/summary")
+
 	require.Equal(t, http.StatusNotFound, rr.Code)
 }

@@ -5,33 +5,18 @@ import (
 	"time"
 
 	"github.com/marco/pdf-extractext-repositorios/internal/domain"
+	"github.com/marco/pdf-extractext-repositorios/internal/testutil"
 	"github.com/stretchr/testify/require"
 )
 
 func TestPersistedRoundTrip(t *testing.T) {
-	summary := "resumen"
+	doc := testutil.CompleteDoc()
 	deletedAt := time.Now().UTC()
-	created := time.Now().UTC()
-	doc := domain.Document{
-		DocumentID:       "doc-1",
-		Checksum:         "abc",
-		SummaryStatus:    domain.SummaryResolved,
-		ExtractedText:    "texto",
-		Summary:          &summary,
-		Metadata:         domain.Metadata{Filename: "x.pdf", MimeType: "application/pdf", SizeBytes: 10, PageCount: 2},
-		ExtractionTimeMS: 3,
-		SummaryTimeMS:    2,
-		CreatedAt:        created,
-		UpdatedAt:        created,
-		DeletedAt:        &deletedAt,
-	}
+	doc.DeletedAt = &deletedAt
 
 	got := toDomain(toPersisted(doc))
 
-	require.Equal(t, doc.DocumentID, got.DocumentID)
-	require.Equal(t, doc.Checksum, got.Checksum)
-	require.Equal(t, doc.SummaryStatus, got.SummaryStatus)
-	require.Equal(t, doc.ExtractedText, got.ExtractedText)
+	testutil.RequireSameContent(t, doc, got)
 	require.Equal(t, doc.Summary, got.Summary)
 	require.Equal(t, doc.Metadata, got.Metadata)
 	require.Equal(t, doc.ExtractionTimeMS, got.ExtractionTimeMS)

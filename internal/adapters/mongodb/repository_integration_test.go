@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/marco/pdf-extractext-repositorios/internal/domain"
+	"github.com/marco/pdf-extractext-repositorios/internal/testutil"
 	"github.com/stretchr/testify/require"
 )
 
@@ -19,10 +20,7 @@ func TestRepository_Integration_InsertAndFindByDocumentID(t *testing.T) {
 
 	got, err := repo.FindByDocumentID(context.Background(), "doc-1")
 	require.NoError(t, err)
-	require.Equal(t, doc.DocumentID, got.DocumentID)
-	require.Equal(t, doc.Checksum, got.Checksum)
-	require.Equal(t, doc.SummaryStatus, got.SummaryStatus)
-	require.Equal(t, doc.ExtractedText, got.ExtractedText)
+	testutil.RequireSameContent(t, doc, *got)
 	require.Nil(t, got.Summary)
 	require.Equal(t, doc.Metadata, got.Metadata)
 	require.Equal(t, doc.CreatedAt, got.CreatedAt)

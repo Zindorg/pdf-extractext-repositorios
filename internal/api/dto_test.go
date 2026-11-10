@@ -6,24 +6,12 @@ import (
 	"time"
 
 	"github.com/marco/pdf-extractext-repositorios/internal/domain"
+	"github.com/marco/pdf-extractext-repositorios/internal/testutil"
 	"github.com/stretchr/testify/require"
 )
 
 func TestToResponse(t *testing.T) {
-	summary := "resumen"
-	created := time.Now().UTC()
-	doc := domain.Document{
-		DocumentID:       "doc-1",
-		Checksum:         "abc",
-		SummaryStatus:    domain.SummaryResolved,
-		ExtractedText:    "texto",
-		Summary:          &summary,
-		Metadata:         domain.Metadata{Filename: "x.pdf", MimeType: "application/pdf", SizeBytes: 10, PageCount: 2},
-		ExtractionTimeMS: 3,
-		SummaryTimeMS:    2,
-		CreatedAt:        created,
-		UpdatedAt:        created,
-	}
+	doc := testutil.CompleteDoc()
 
 	got := toResponse(doc)
 
@@ -31,12 +19,12 @@ func TestToResponse(t *testing.T) {
 	require.Equal(t, "abc", got.Checksum)
 	require.Equal(t, "RESOLVED", got.SummaryStatus)
 	require.Equal(t, "texto", got.ExtractedText)
-	require.Equal(t, &summary, got.Summary)
+	require.Equal(t, doc.Summary, got.Summary)
 	require.Equal(t, doc.Metadata, got.Metadata)
 	// processing_time_ms = extraction + summary (la API expone la suma total)
 	require.Equal(t, int64(5), got.ProcessingTimeMS)
-	require.Equal(t, created, got.CreatedAt)
-	require.Equal(t, created, got.UpdatedAt)
+	require.Equal(t, doc.CreatedAt, got.CreatedAt)
+	require.Equal(t, doc.UpdatedAt, got.UpdatedAt)
 }
 
 func TestToResponse_NilSummary(t *testing.T) {

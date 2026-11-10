@@ -12,37 +12,57 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func newRepo() *testutil.MemoryRepository {
-	return testutil.NewMemoryRepository()
+// newService crea el servicio real sobre el fake en-memoria compartido
+// (testutil), de modo que los tests ejerciten la lógica de aplicación.
+func newService() (*application.DocumentService, *testutil.MemoryRepository) {
+	repo := testutil.NewMemoryRepository()
+	return application.NewDocumentService(repo), repo
+}
+
+// seedPending inserta un documento PENDING vía el servicio.
+func seedPending(t *testing.T, svc *application.DocumentService, id, checksum, text string) {
+	t.Helper()
+	doc := testutil.NewDoc(id, "", checksum, domain.SummaryPending, time.Now().UTC())
+	doc.ExtractedText = text
+	_, err := svc.CreatePending(context.Background(), doc)
+	require.NoError(t, err)
+}
+
+// insertSoftDeleted guarda un documento ya borrado (soft delete) vía el fake,
+// imitando el estado que deja SoftDelete: borrado hace una hora.
+func insertSoftDeleted(t *testing.T, repo *testutil.MemoryRepository, doc domain.Document) {
+	t.Helper()
+	testutil.SeedSoftDeleted(t, repo, doc, time.Now().UTC().Add(-time.Hour))
+}
+
+// makeListDoc crea un documento de prueba para tests de List sobre el
+// fixture compartido (testutil.NewListDoc), fijando las convenciones locales:
+// sin filename y created_at relativo a hace una hora.
+func makeListDoc(id, status string) domain.Document {
+	return testutil.NewListDoc(id, "", domain.SummaryStatus(status), time.Now().UTC().Add(-time.Hour))
 }
 
 func TestSoftDelete_Success(t *testing.T) {
-	repo := newRepo()
-	svc := application.NewDocumentService(repo)
+	svc, _ := newService()
 
-	_, err := svc.CreatePending(context.Background(), domain.Document{
-		DocumentID: "doc-1", Checksum: "chk-1", ExtractedText: "contenido",
-	})
-	require.NoError(t, err)
+	seedPending(t, svc, "doc-1", "chk-1", "contenido")
 
 	require.NoError(t, svc.SoftDelete(context.Background(), "doc-1"))
 
 	// Borrado lógico → invisible para lectura
-	_, err = svc.GetByDocumentID(context.Background(), "doc-1")
+	_, err := svc.GetByDocumentID(context.Background(), "doc-1")
 	require.ErrorIs(t, err, domain.ErrNotFound)
 }
 
 func TestSoftDelete_NotFound(t *testing.T) {
-	repo := newRepo()
-	svc := application.NewDocumentService(repo)
+	svc, _ := newService()
 
 	err := svc.SoftDelete(context.Background(), "no-existe")
 	require.ErrorIs(t, err, domain.ErrNotFound)
 }
 
 func TestSoftDelete_AlreadyDeleted(t *testing.T) {
-	repo := newRepo()
-	svc := application.NewDocumentService(repo)
+	svc, repo := newService()
 
 	insertSoftDeleted(t, repo, domain.Document{DocumentID: "doc-1", Checksum: "chk-1"})
 
@@ -51,8 +71,7 @@ func TestSoftDelete_AlreadyDeleted(t *testing.T) {
 }
 
 func TestRestore_Success(t *testing.T) {
-	repo := newRepo()
-	svc := application.NewDocumentService(repo)
+	svc, repo := newService()
 
 	insertSoftDeleted(t, repo, domain.Document{DocumentID: "doc-1", Checksum: "chk-1"})
 
@@ -64,36 +83,30 @@ func TestRestore_Success(t *testing.T) {
 }
 
 func TestRestore_NotFound(t *testing.T) {
-	repo := newRepo()
-	svc := application.NewDocumentService(repo)
+	svc, _ := newService()
 
 	err := svc.Restore(context.Background(), "no-existe")
 	require.ErrorIs(t, err, domain.ErrNotFound)
 }
 
 func TestRestore_AlreadyActive(t *testing.T) {
-	repo := newRepo()
-	svc := application.NewDocumentService(repo)
+	svc, _ := newService()
 
-	_, err := svc.CreatePending(context.Background(), domain.Document{
-		DocumentID: "doc-1", Checksum: "chk-1",
-	})
-	require.NoError(t, err)
+	seedPending(t, svc, "doc-1", "chk-1", "")
 
 	// Restaurar un doc activo → éxito idempotente
 	require.NoError(t, svc.Restore(context.Background(), "doc-1"))
 }
 
 func TestRestore_ConflictChecksum(t *testing.T) {
-	repo := newRepo()
-	svc := application.NewDocumentService(repo)
+	svc, repo := newService()
 
 	// Doc A: borrado, checksum "chk-1"
 	insertSoftDeleted(t, repo, domain.Document{DocumentID: "doc-A", Checksum: "chk-1"})
 	// Doc B: ACTIVO, mismo checksum (re-ingest tras liberación)
-	require.NoError(t, repo.Insert(context.Background(), domain.Document{
+	testutil.SeedDoc(t, repo, domain.Document{
 		DocumentID: "doc-B", Checksum: "chk-1", ExtractedText: "b",
-	}))
+	})
 
 	err := svc.Restore(context.Background(), "doc-A")
 	require.ErrorIs(t, err, domain.ErrRestoreConflict)
@@ -104,8 +117,7 @@ func TestRestore_ConflictChecksum(t *testing.T) {
 }
 
 func TestCreatePending_StoresPendingDocument(t *testing.T) {
-	repo := newRepo()
-	svc := application.NewDocumentService(repo)
+	svc, repo := newService()
 
 	payload := domain.Document{
 		DocumentID:       "doc-1",
@@ -139,40 +151,31 @@ func TestCreatePending_StoresPendingDocument(t *testing.T) {
 }
 
 func TestCreatePending_DuplicateChecksum(t *testing.T) {
-	repo := newRepo()
-	svc := application.NewDocumentService(repo)
+	svc, _ := newService()
 
-	first := domain.Document{DocumentID: "doc-1", Checksum: "same-checksum", ExtractedText: "a"}
-	_, err := svc.CreatePending(context.Background(), first)
-	require.NoError(t, err)
+	seedPending(t, svc, "doc-1", "same-checksum", "a")
 
-	second := domain.Document{DocumentID: "doc-2", Checksum: "same-checksum", ExtractedText: "b"}
-	_, err = svc.CreatePending(context.Background(), second)
+	_, err := svc.CreatePending(context.Background(), domain.Document{
+		DocumentID: "doc-2", Checksum: "same-checksum", ExtractedText: "b",
+	})
 	require.ErrorIs(t, err, domain.ErrDuplicateChecksum)
 }
 
 func TestCreatePending_DuplicateDocumentID(t *testing.T) {
-	repo := newRepo()
-	svc := application.NewDocumentService(repo)
+	svc, _ := newService()
 
-	payload := domain.Document{DocumentID: "doc-1", Checksum: "checksum-a"}
-	_, err := svc.CreatePending(context.Background(), payload)
-	require.NoError(t, err)
+	seedPending(t, svc, "doc-1", "checksum-a", "")
 
-	_, err = svc.CreatePending(context.Background(), payload)
+	_, err := svc.CreatePending(context.Background(), domain.Document{
+		DocumentID: "doc-1", Checksum: "checksum-a",
+	})
 	require.ErrorIs(t, err, domain.ErrDuplicateDocumentID)
 }
 
 func TestCompleteWithSummary_CompletesPendingDocument(t *testing.T) {
-	repo := newRepo()
-	svc := application.NewDocumentService(repo)
+	svc, _ := newService()
 
-	_, err := svc.CreatePending(context.Background(), domain.Document{
-		DocumentID:    "doc-1",
-		Checksum:      "abc123",
-		ExtractedText: "contenido original",
-	})
-	require.NoError(t, err)
+	seedPending(t, svc, "doc-1", "abc123", "contenido original")
 
 	got, err := svc.CompleteWithSummary(context.Background(), "doc-1", "resumen del doc", 120)
 	require.NoError(t, err)
@@ -185,21 +188,18 @@ func TestCompleteWithSummary_CompletesPendingDocument(t *testing.T) {
 }
 
 func TestCompleteWithSummary_OrphanSummary_ReturnsErrNotFound(t *testing.T) {
-	repo := newRepo()
-	svc := application.NewDocumentService(repo)
+	svc, _ := newService()
 
 	_, err := svc.CompleteWithSummary(context.Background(), "no-existe", "resumen huérfano", 120)
 	require.ErrorIs(t, err, domain.ErrNotFound)
 }
 
 func TestCompleteWithSummary_AlreadyCompleted_IsBenign(t *testing.T) {
-	repo := newRepo()
-	svc := application.NewDocumentService(repo)
+	svc, repo := newService()
 
-	_, err := svc.CreatePending(context.Background(), domain.Document{DocumentID: "doc-1", Checksum: "abc123"})
-	require.NoError(t, err)
+	seedPending(t, svc, "doc-1", "abc123", "")
 
-	_, err = svc.CompleteWithSummary(context.Background(), "doc-1", "primera vez", 120)
+	_, err := svc.CompleteWithSummary(context.Background(), "doc-1", "primera vez", 120)
 	require.NoError(t, err)
 
 	// Duplicado legítimo (entrega at-least-once): sin error → consumer hace XACK + descarte.
@@ -213,23 +213,10 @@ func TestCompleteWithSummary_AlreadyCompleted_IsBenign(t *testing.T) {
 	require.Equal(t, int64(120), stored.SummaryTimeMS)
 }
 
-// insertSoftDeleted guarda un documento ya borrado (soft delete) vía el fake,
-// imitando el estado que dejará SoftDelete cuando esté implementado.
-func insertSoftDeleted(t *testing.T, repo *testutil.MemoryRepository, doc domain.Document) {
-	t.Helper()
-	deletedAt := time.Now().UTC().Add(-time.Hour)
-	require.NoError(t, repo.Insert(context.Background(), testutil.WithDeleted(doc, deletedAt)))
-}
-
 func TestGetByDocumentID_Found(t *testing.T) {
-	repo := newRepo()
-	svc := application.NewDocumentService(repo)
+	svc, _ := newService()
 
-	_, err := svc.CreatePending(context.Background(), domain.Document{
-		DocumentID: "doc-1", Checksum: "abc123", ExtractedText: "contenido",
-		SummaryStatus: domain.SummaryPending,
-	})
-	require.NoError(t, err)
+	seedPending(t, svc, "doc-1", "abc123", "contenido")
 
 	got, err := svc.GetByDocumentID(context.Background(), "doc-1")
 	require.NoError(t, err)
@@ -240,8 +227,7 @@ func TestGetByDocumentID_Found(t *testing.T) {
 }
 
 func TestGetByDocumentID_NotFound(t *testing.T) {
-	repo := newRepo()
-	svc := application.NewDocumentService(repo)
+	svc, _ := newService()
 
 	got, err := svc.GetByDocumentID(context.Background(), "no-existe")
 	require.Nil(t, got)
@@ -249,8 +235,7 @@ func TestGetByDocumentID_NotFound(t *testing.T) {
 }
 
 func TestGetByDocumentID_SoftDeleted_ReturnsErrNotFound(t *testing.T) {
-	repo := newRepo()
-	svc := application.NewDocumentService(repo)
+	svc, repo := newService()
 
 	insertSoftDeleted(t, repo, domain.Document{DocumentID: "doc-del", Checksum: "del-1"})
 
@@ -260,13 +245,9 @@ func TestGetByDocumentID_SoftDeleted_ReturnsErrNotFound(t *testing.T) {
 }
 
 func TestGetByChecksum_Found(t *testing.T) {
-	repo := newRepo()
-	svc := application.NewDocumentService(repo)
+	svc, _ := newService()
 
-	_, err := svc.CreatePending(context.Background(), domain.Document{
-		DocumentID: "doc-1", Checksum: "abc123", ExtractedText: "contenido",
-	})
-	require.NoError(t, err)
+	seedPending(t, svc, "doc-1", "abc123", "contenido")
 
 	got, err := svc.GetByChecksum(context.Background(), "abc123")
 	require.NoError(t, err)
@@ -276,8 +257,7 @@ func TestGetByChecksum_Found(t *testing.T) {
 }
 
 func TestGetByChecksum_NotFound(t *testing.T) {
-	repo := newRepo()
-	svc := application.NewDocumentService(repo)
+	svc, _ := newService()
 
 	got, err := svc.GetByChecksum(context.Background(), "no-existe")
 	require.Nil(t, got)
@@ -285,8 +265,7 @@ func TestGetByChecksum_NotFound(t *testing.T) {
 }
 
 func TestGetByChecksum_SoftDeleted_ReturnsErrNotFound(t *testing.T) {
-	repo := newRepo()
-	svc := application.NewDocumentService(repo)
+	svc, repo := newService()
 
 	insertSoftDeleted(t, repo, domain.Document{DocumentID: "doc-del", Checksum: "del-check"})
 
@@ -295,20 +274,10 @@ func TestGetByChecksum_SoftDeleted_ReturnsErrNotFound(t *testing.T) {
 	require.ErrorIs(t, err, domain.ErrNotFound)
 }
 
-// makeListDoc crea un documento de prueba para tests de List sobre el
-// fixture compartido (testutil.NewDoc), fijando las convenciones locales:
-// sin filename y created_at relativo a hace una hora.
-func makeListDoc(id, checksum, status string) domain.Document {
-	return testutil.NewDoc(id, "", checksum, domain.SummaryStatus(status), time.Now().UTC().Add(-time.Hour))
-}
-
 func TestList_DefaultPagination(t *testing.T) {
-	repo := newRepo()
-	svc := application.NewDocumentService(repo)
+	svc, repo := newService()
 
-	for i := 1; i <= 25; i++ {
-		repo.Insert(context.Background(), makeListDoc(fmt.Sprintf("doc-%d", i), fmt.Sprintf("chk-%d", i), "PENDING"))
-	}
+	seedListDocs(t, repo, 25)
 
 	docs, total, err := svc.List(context.Background(), domain.ListFilter{}, 0, 0)
 	require.NoError(t, err)
@@ -319,12 +288,9 @@ func TestList_DefaultPagination(t *testing.T) {
 }
 
 func TestList_CustomPagination(t *testing.T) {
-	repo := newRepo()
-	svc := application.NewDocumentService(repo)
+	svc, repo := newService()
 
-	for i := 1; i <= 25; i++ {
-		repo.Insert(context.Background(), makeListDoc(fmt.Sprintf("doc-%d", i), fmt.Sprintf("chk-%d", i), "PENDING"))
-	}
+	seedListDocs(t, repo, 25)
 
 	// page=2, pageSize=10
 	docs, total, err := svc.List(context.Background(), domain.ListFilter{}, 2, 10)
@@ -339,94 +305,89 @@ func TestList_CustomPagination(t *testing.T) {
 }
 
 func TestList_FilterByStatus(t *testing.T) {
-	repo := newRepo()
-	svc := application.NewDocumentService(repo)
+	svc, repo := newService()
 
-	repo.Insert(context.Background(), makeListDoc("doc-1", "chk-1", "PENDING"))
-	repo.Insert(context.Background(), makeListDoc("doc-2", "chk-2", "RESOLVED"))
-	repo.Insert(context.Background(), makeListDoc("doc-3", "chk-3", "PENDING"))
+	testutil.SeedDoc(t, repo, makeListDoc("doc-1", "PENDING"))
+	testutil.SeedDoc(t, repo, makeListDoc("doc-2", "RESOLVED"))
+	testutil.SeedDoc(t, repo, makeListDoc("doc-3", "PENDING"))
 
 	pending := domain.SummaryPending
-	docs, total, err := svc.List(context.Background(), domain.ListFilter{SummaryStatus: &pending}, 1, 20)
-	require.NoError(t, err)
+	docs, total := testutil.ListDocs(t, svc, domain.ListFilter{SummaryStatus: &pending})
+
 	require.Equal(t, int64(2), total)
 	require.Len(t, docs, 2)
-	for _, d := range docs {
-		require.Equal(t, domain.SummaryPending, d.SummaryStatus)
-	}
+	testutil.RequireAllStatus(t, docs, domain.SummaryPending)
 }
 
 func TestList_FilterByFilename(t *testing.T) {
-	repo := newRepo()
-	svc := application.NewDocumentService(repo)
+	svc, repo := newService()
 
-	repo.Insert(context.Background(), testutil.NewDoc("doc-1", "informe.pdf", "c1", domain.SummaryPending, time.Time{}))
-	repo.Insert(context.Background(), testutil.NewDoc("doc-2", "factura.pdf", "c2", domain.SummaryPending, time.Time{}))
-	repo.Insert(context.Background(), testutil.NewDoc("doc-3", "INFORME_anual.pdf", "c3", domain.SummaryPending, time.Time{}))
+	testutil.SeedDoc(t, repo, testutil.NewListDoc("doc-1", "informe.pdf", domain.SummaryPending, time.Time{}))
+	testutil.SeedDoc(t, repo, testutil.NewListDoc("doc-2", "factura.pdf", domain.SummaryPending, time.Time{}))
+	testutil.SeedDoc(t, repo, testutil.NewListDoc("doc-3", "INFORME_anual.pdf", domain.SummaryPending, time.Time{}))
 
 	fn := "informe"
-	_, total, err := svc.List(context.Background(), domain.ListFilter{Filename: &fn}, 1, 20)
-	require.NoError(t, err)
+	_, total := testutil.ListDocs(t, svc, domain.ListFilter{Filename: &fn})
+
 	require.Equal(t, int64(2), total) // "informe.pdf" + "INFORME_anual.pdf" (case-insensitive)
 }
 
 func TestList_FilterByCreatedRange(t *testing.T) {
-	repo := newRepo()
-	svc := application.NewDocumentService(repo)
+	svc, repo := newService()
 
 	now := time.Now().UTC()
-	repo.Insert(context.Background(), testutil.NewDoc("old", "", "c1", domain.SummaryPending, now.Add(-48*time.Hour)))
-	repo.Insert(context.Background(), testutil.NewDoc("mid", "", "c2", domain.SummaryPending, now.Add(-24*time.Hour)))
-	repo.Insert(context.Background(), testutil.NewDoc("new", "", "c3", domain.SummaryPending, now.Add(-1*time.Hour)))
+	testutil.SeedDoc(t, repo, testutil.NewListDoc("old", "", domain.SummaryPending, now.Add(-48*time.Hour)))
+	testutil.SeedDoc(t, repo, testutil.NewListDoc("mid", "", domain.SummaryPending, now.Add(-24*time.Hour)))
+	testutil.SeedDoc(t, repo, testutil.NewListDoc("new", "", domain.SummaryPending, now.Add(-1*time.Hour)))
 
 	from := now.Add(-36 * time.Hour)
 	to := now.Add(-12 * time.Hour)
-	docs, total, err := svc.List(context.Background(), domain.ListFilter{CreatedFrom: &from, CreatedTo: &to}, 1, 20)
-	require.NoError(t, err)
+	docs, total := testutil.ListDocs(t, svc, domain.ListFilter{CreatedFrom: &from, CreatedTo: &to})
+
 	require.Equal(t, int64(1), total) // solo "mid"
 	require.Equal(t, "mid", docs[0].DocumentID)
 }
 
 func TestList_IncludeDeleted(t *testing.T) {
-	repo := newRepo()
-	svc := application.NewDocumentService(repo)
+	svc, repo := newService()
 
-	repo.Insert(context.Background(), makeListDoc("active", "c1", "PENDING"))
-	insertSoftDeleted(t, repo, makeListDoc("deleted", "c2", "PENDING"))
+	testutil.SeedDoc(t, repo, makeListDoc("active", "PENDING"))
+	insertSoftDeleted(t, repo, makeListDoc("deleted", "PENDING"))
 
 	// Sin IncludeDeleted → excluye borrados
-	docs, _, err := svc.List(context.Background(), domain.ListFilter{}, 1, 20)
-	require.NoError(t, err)
+	docs, _ := testutil.ListDocs(t, svc, domain.ListFilter{})
 	require.Len(t, docs, 1)
 	require.Equal(t, "active", docs[0].DocumentID)
 
 	// Con IncludeDeleted=true → incluye borrados
-	docs, total, err := svc.List(context.Background(), domain.ListFilter{IncludeDeleted: true}, 1, 20)
-	require.NoError(t, err)
+	docs, total := testutil.ListDocs(t, svc, domain.ListFilter{IncludeDeleted: true})
 	require.Equal(t, int64(2), total)
 	require.Len(t, docs, 2)
 }
 
 func TestList_ExcludesDeletedByDefault(t *testing.T) {
-	repo := newRepo()
-	svc := application.NewDocumentService(repo)
+	svc, repo := newService()
 
-	insertSoftDeleted(t, repo, makeListDoc("deleted", "c1", "PENDING"))
+	insertSoftDeleted(t, repo, makeListDoc("deleted", "PENDING"))
 
-	_, total, err := svc.List(context.Background(), domain.ListFilter{}, 1, 20)
-	require.NoError(t, err)
+	_, total := testutil.ListDocs(t, svc, domain.ListFilter{})
 	require.Equal(t, int64(0), total)
 }
 
 func TestList_ReturnsTotal(t *testing.T) {
-	repo := newRepo()
-	svc := application.NewDocumentService(repo)
+	svc, repo := newService()
 
-	for i := 1; i <= 42; i++ {
-		repo.Insert(context.Background(), makeListDoc(fmt.Sprintf("doc-%d", i), fmt.Sprintf("chk-%d", i), "PENDING"))
-	}
+	seedListDocs(t, repo, 42)
 
 	_, total, err := svc.List(context.Background(), domain.ListFilter{}, 2, 10)
 	require.NoError(t, err)
 	require.Equal(t, int64(42), total) // total correcto para paginación
+}
+
+// seedListDocs inserta n documentos PENDING con ids "doc-1".."doc-n".
+func seedListDocs(t *testing.T, repo *testutil.MemoryRepository, n int) {
+	t.Helper()
+	for i := 1; i <= n; i++ {
+		testutil.SeedDoc(t, repo, makeListDoc(fmt.Sprintf("doc-%d", i), "PENDING"))
+	}
 }

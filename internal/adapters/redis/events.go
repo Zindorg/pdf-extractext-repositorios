@@ -74,40 +74,32 @@ func resolveDiscriminator(eventType, event string) (string, error) {
 	}
 }
 
-func parseOriginal(data string) (*OriginalEvent, error) {
-	kind, err := discriminator(data)
+// parseEvent decodifica el payload en el tipo de evento esperado y lo valida.
+// kind es el discriminante que el payload debe resolver.
+func parseEvent[T any](data, kind string, validate func(*T) error) (*T, error) {
+	resolved, err := discriminator(data)
 	if err != nil {
 		return nil, err
 	}
-	if kind != eventOriginal {
-		return nil, fmt.Errorf("expected %q event, got %q", eventOriginal, kind)
+	if resolved != kind {
+		return nil, fmt.Errorf("expected %q event, got %q", kind, resolved)
 	}
-	var ev OriginalEvent
+	var ev T
 	if err := json.Unmarshal([]byte(data), &ev); err != nil {
 		return nil, err
 	}
-	if err := ev.validate(); err != nil {
+	if err := validate(&ev); err != nil {
 		return nil, err
 	}
 	return &ev, nil
 }
 
+func parseOriginal(data string) (*OriginalEvent, error) {
+	return parseEvent(data, eventOriginal, (*OriginalEvent).validate)
+}
+
 func parseSummaryResolved(data string) (*SummaryResolvedEvent, error) {
-	kind, err := discriminator(data)
-	if err != nil {
-		return nil, err
-	}
-	if kind != eventSummaryResolved {
-		return nil, fmt.Errorf("expected %q event, got %q", eventSummaryResolved, kind)
-	}
-	var ev SummaryResolvedEvent
-	if err := json.Unmarshal([]byte(data), &ev); err != nil {
-		return nil, err
-	}
-	if err := ev.validate(); err != nil {
-		return nil, err
-	}
-	return &ev, nil
+	return parseEvent(data, eventSummaryResolved, (*SummaryResolvedEvent).validate)
 }
 
 func (e *OriginalEvent) validate() error {

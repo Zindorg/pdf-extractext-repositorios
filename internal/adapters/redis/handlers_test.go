@@ -17,10 +17,19 @@ func newHandler() (*MessageHandlers, *testutil.MemoryRepository) {
 	return NewMessageHandlers(service), repo
 }
 
+// seedOriginal ingesta un evento original y devuelve el documento persistido.
+func seedOriginal(t *testing.T, h *MessageHandlers, repo *testutil.MemoryRepository, ev *OriginalEvent) domain.Document {
+	t.Helper()
+	require.NoError(t, h.OnOriginal(context.Background(), ev))
+	doc, err := repo.FindByDocumentID(context.Background(), ev.DocumentID)
+	require.NoError(t, err)
+	return *doc
+}
+
 func TestOnOriginal_CreatesPendingDocument(t *testing.T) {
 	h, repo := newHandler()
 
-	err := h.OnOriginal(context.Background(), &OriginalEvent{
+	doc := seedOriginal(t, h, repo, &OriginalEvent{
 		EventType: eventOriginal, Event: eventOriginal, SchemaVersion: 1,
 		DocumentID: "doc-1", Checksum: "chk-1", ExtractedText: "texto",
 		ExtractionTimeMS: 342, MimeType: "application/pdf",
@@ -28,10 +37,7 @@ func TestOnOriginal_CreatesPendingDocument(t *testing.T) {
 		Filename:         "informe.pdf",
 		Metadata:         domain.Metadata{Filename: "x.pdf"},
 	})
-	require.NoError(t, err)
 
-	doc, err := repo.FindByDocumentID(context.Background(), "doc-1")
-	require.NoError(t, err)
 	require.Equal(t, domain.SummaryPending, doc.SummaryStatus)
 	require.Equal(t, "chk-1", doc.Checksum)
 	require.Equal(t, "texto", doc.ExtractedText)
@@ -58,14 +64,12 @@ func TestOnOriginal_NormalizesSummaryStatus(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			h, repo := newHandler()
 			id := fmt.Sprintf("doc-%d", i)
-			require.NoError(t, h.OnOriginal(context.Background(), &OriginalEvent{
+			doc := seedOriginal(t, h, repo, &OriginalEvent{
 				EventType: eventOriginal, SchemaVersion: 1,
 				DocumentID: id, Checksum: "chk-" + id, ExtractedText: "texto",
 				SummaryRequested: tc.requested, SummaryStatus: tc.declared,
-			}))
+			})
 
-			doc, err := repo.FindByDocumentID(context.Background(), id)
-			require.NoError(t, err)
 			require.Equal(t, tc.want, doc.SummaryStatus)
 		})
 	}
@@ -74,14 +78,12 @@ func TestOnOriginal_NormalizesSummaryStatus(t *testing.T) {
 func TestOnOriginal_FilenameFallsBackToMetadata(t *testing.T) {
 	h, repo := newHandler()
 
-	require.NoError(t, h.OnOriginal(context.Background(), &OriginalEvent{
+	doc := seedOriginal(t, h, repo, &OriginalEvent{
 		EventType: eventOriginal, SchemaVersion: 1,
 		DocumentID: "doc-1", Checksum: "chk-1", ExtractedText: "texto",
 		Metadata: domain.Metadata{Filename: "x.pdf"},
-	}))
+	})
 
-	doc, err := repo.FindByDocumentID(context.Background(), "doc-1")
-	require.NoError(t, err)
 	require.Equal(t, "x.pdf", doc.Metadata.Filename)
 }
 
@@ -114,10 +116,10 @@ func TestOnOriginal_DuplicateDocumentID_Swallows(t *testing.T) {
 
 func TestOnSummaryResolved_CompletesDocument(t *testing.T) {
 	h, repo := newHandler()
-	require.NoError(t, h.OnOriginal(context.Background(), &OriginalEvent{
+	seedOriginal(t, h, repo, &OriginalEvent{
 		EventType: eventOriginal, SchemaVersion: 1,
 		DocumentID: "doc-1", Checksum: "chk-1", ExtractedText: "a",
-	}))
+	})
 
 	err := h.OnSummaryResolved(context.Background(), &SummaryResolvedEvent{
 		EventType: eventSummaryResolved, SchemaVersion: 1,
@@ -127,9 +129,7 @@ func TestOnSummaryResolved_CompletesDocument(t *testing.T) {
 
 	doc, err := repo.FindByDocumentID(context.Background(), "doc-1")
 	require.NoError(t, err)
-	require.Equal(t, domain.SummaryResolved, doc.SummaryStatus)
-	require.Equal(t, "resumen", *doc.Summary)
-	require.Equal(t, int64(120), doc.SummaryTimeMS)
+	testutil.RequireSummaryResolved(t, *doc, "resumen", 120)
 	require.True(t, doc.UpdatedAt.After(doc.CreatedAt))
 }
 
@@ -146,10 +146,10 @@ func TestOnSummaryResolved_Orphan_ReturnsErrNotFound(t *testing.T) {
 
 func TestOnSummaryResolved_AlreadyCompleted_IsBenign(t *testing.T) {
 	h, repo := newHandler()
-	require.NoError(t, h.OnOriginal(context.Background(), &OriginalEvent{
+	seedOriginal(t, h, repo, &OriginalEvent{
 		EventType: eventOriginal, SchemaVersion: 1,
 		DocumentID: "doc-1", Checksum: "chk-1", ExtractedText: "a",
-	}))
+	})
 	require.NoError(t, h.OnSummaryResolved(context.Background(), &SummaryResolvedEvent{
 		EventType: eventSummaryResolved, SchemaVersion: 1,
 		DocumentID: "doc-1", Summary: "primera vez", SummaryTimeMS: 120,

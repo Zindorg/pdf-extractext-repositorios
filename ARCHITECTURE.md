@@ -476,11 +476,17 @@ Pirámide de pruebas, todo conducido por **TDD** (rojo → verde):
 
 | Capa | Tipo | Cobertura |
 |---|---|---|
-| Service | Unit (repo fake con `testify/mock`) | Create PENDING ok, checksum duplicado → 409, document_id duplicado → 409, completeWithSummary ok, resumen huérfano → error, GET borrado → 404, soft-delete inexistente → 404, restore conflicto → 409, list con filtros/paginación/total |
+| Service | Unit (repo fake en memoria: `testutil.MemoryRepository`) | Create PENDING ok, checksum duplicado → 409, document_id duplicado → 409, completeWithSummary ok, resumen huérfano → error, GET borrado → 404, soft-delete inexistente → 404, restore conflicto → 409, list con filtros/paginación/total |
 | Handlers | `httptest` | Status codes, shapes JSON, `Content-Disposition`, validación 400, envelope de error |
 | Adapter Mongo | Integración (MongoDB real en Docker) | `11000` duplicado, soft-delete → re-ingest mismo checksum OK, restore bloqueado con nuevo activo, PENDING persistido sin resumen, orden/paginación |
 | Consumer Redis | Integración (Redis real en Docker) | original → PENDING, original+summary → COMPLETED, duplicado ACK+descarte, summary huérfano → retry → DLQ |
 | e2e | Smoke contra compose | XADD `original`/`summary` al stream → verificar en Mongo vía HTTP interno (`http://persister:8083`): lectura, descarga, soft-delete |
+
+**Fixtures compartidos**: `internal/testutil` es la única fuente de la forma de
+un documento de test (`NewDoc`, `NewListDoc`, `CompleteDoc`), de los seeders
+(`SeedDoc`, `SeedSoftDeleted`), de los helpers de listado (`ListDocs`) y de
+petición HTTP (`DoGet`/`DoPost`/`DoDelete`), de modo que los tests unitarios y
+los de integración prueban exactamente el mismo documento.
 
 Comandos: `make test`, `make test-integration`, `make test-e2e`, `go vet ./...`.
 
