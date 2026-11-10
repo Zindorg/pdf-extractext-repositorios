@@ -404,6 +404,7 @@ Live en `docs/adr/`:
 - Redes: `mired` (**externa**, compartida con el ecosistema: aquí viven app y redis) y `db-net` con `internal: true` (creada por el compose de mongo; la referencian mongo y app — la única con acceso a la BD).
 - **Endurecimiento**: los puertos se publican solo en `127.0.0.1` (nunca en la LAN), cada servicio corre con `no-new-privileges:true` y `restart: unless-stopped`, y Mongo/Redis declaran `healthcheck` (la app no puede: imagen distroless sin shell). Mongo corre **standalone** (sin replica set): el código no usa transacciones ni change streams.
 - **Acceso del host a Mongo**: Docker **no publica puertos** de contenedores conectados solo a redes `internal`. Por eso Mongo va dual-homed: `db-net` (internal, ruta privada app↔mongo) **y** `db-dev` (no-internal, con `enable_ip_masquerade=false`), que habilita el puerto en `127.0.0.1` para dev/tests **sin salida a internet**. Sin esto, los tests de integración de Mongo se saltaban en silencio (`t.Skip`).
+- **Paridad dev/prod (12 Factor IX)**: la red `db-dev` (no-internal, puerto 27017 en loopback) solo existe para tests de integración locales. En prod, Mongo corre exclusivamente en `db-net` (internal=true) sin puertos publicados. El compose de app referencia `db-net` como `external: true`; `db-dev` es opcional y solo para desarrollo.
 
 ```yaml
 # docker-compose.mongo.yml

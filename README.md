@@ -49,7 +49,7 @@ docker network create mired 2>/dev/null || true
 
 cp .env.example .env
 make compose-up        # mongo + redis + persister
-curl http://localhost :8083/api/v1/health   # {"status":"ok"}
+curl http://127.0.0.1:8083/api/v1/health   # {"status":"ok"}
 ```
 
 Composes individuales: `make compose-mongo`, `make compose-redis`, `make compose-app`. La app queda expuesta al ecosistema como `http://persister:8083` en la red `mired` (y opcionalmente `http://persister.internal` vía Traefik). Por seguridad, los puertos del host se publican solo en `127.0.0.1` (nunca en la LAN) y Mongo queda aislada en la red interna `db-net`.
@@ -73,6 +73,17 @@ docker exec persister-mongo mongo --quiet --eval 'db.getSiblingDB(process.env.MO
 ```
 
 Criterio de éxito: `/health` → `200 {"status":"ok"}`, existe el consumer group `documents-persister`, los 5 índices aparecen en Mongo.
+
+### Paridad Dev/Prod (12 Factor IX)
+
+| Aspecto | Dev (local) | Prod |
+|---|---|---|
+| MongoDB | `db-dev` network + puerto `127.0.0.1:27017` publicado | Solo `db-net` (internal), **sin** puerto publicado |
+| Redis | `127.0.0.1:6379` publicado | Solo red `mired`, sin puerto host |
+| App | `docker compose up` con build local | Imagen pre-built `pdf-extractext-repositorios:vX.Y.Z` |
+| Logs | `docker logs -f` | Driver json-file con rotation (10MB/5 files) |
+
+La red `db-dev` solo existe en `docker-compose.mongo.yml` para permitir tests de integración locales. En prod no se usa; Mongo queda aislado en `db-net` (internal=true).
 
 ### Conectividad con el Orquestador
 
