@@ -2,51 +2,14 @@ package api_test
 
 import (
 	"context"
-	"encoding/json"
 	"net/http"
 	"net/url"
 	"testing"
-	"time"
 
-	"github.com/gin-gonic/gin"
-	"github.com/marco/pdf-extractext-repositorios/internal/api"
-	"github.com/marco/pdf-extractext-repositorios/internal/application"
 	"github.com/marco/pdf-extractext-repositorios/internal/domain"
 	"github.com/marco/pdf-extractext-repositorios/internal/testutil"
 	"github.com/stretchr/testify/require"
 )
-
-// newTestRouter construye la API sobre el MemoryRepository compartido (testutil)
-// con el DocumentService real, de modo que los tests ejercen handler + service.
-func newTestRouter() (*gin.Engine, *application.DocumentService) {
-	repo := testutil.NewMemoryRepository()
-	service := application.NewDocumentService(repo)
-	return newRouter(service, healthy{}), service
-}
-
-// seedPending inserta un documento PENDING vía el servicio.
-func seedPending(t *testing.T, svc *application.DocumentService, id, checksum, text string) {
-	t.Helper()
-	seedWithStatus(t, svc, id, checksum, text, domain.SummaryPending)
-}
-
-// seedWithStatus inserta un documento con el estado de resumen indicado vía el servicio.
-func seedWithStatus(t *testing.T, svc *application.DocumentService, id, checksum, text string, status domain.SummaryStatus) {
-	t.Helper()
-	doc := testutil.NewDoc(id, "mi archivo.pdf", checksum, status, time.Now().UTC())
-	doc.ExtractedText = text
-	doc.ExtractionTimeMS = 342
-	_, err := svc.CreatePending(context.Background(), doc)
-	require.NoError(t, err)
-}
-
-// seedCompleted inserta un documento con el resumen resuelto vía el servicio.
-func seedCompleted(t *testing.T, svc *application.DocumentService, id, checksum, text, summary string) {
-	t.Helper()
-	seedPending(t, svc, id, checksum, text)
-	_, err := svc.CompleteWithSummary(context.Background(), id, summary, 120)
-	require.NoError(t, err)
-}
 
 func TestHandler_GetByDocumentID_OK(t *testing.T) {
 	router, svc := newTestRouter()
@@ -107,88 +70,6 @@ func TestHandler_GetByChecksum_NotFound(t *testing.T) {
 	rr := testutil.DoGet(t, router, "/api/v1/documents/checksum/no-existe")
 
 	require.Equal(t, http.StatusNotFound, rr.Code)
-}
-
-func TestHandler_List_OK_PaginationAndFilters(t *testing.T) {
-	router, svc := newTestRouter()
-	seedCompleted(t, svc, "doc-1", "chk-1", "a", "resumen 1")
-	seedPending(t, svc, "doc-2", "chk-2", "b")
-	seedCompleted(t, svc, "doc-3", "chk-3", "c", "resumen 3")
-	require.NoError(t, svc.SoftDelete(context.Background(), "doc-3"))
-
-	rr := testutil.DoGet(t, router, "/api/v1/documents")
-	require.Equal(t, http.StatusOK, rr.Code)
-	var all api.ListResponse
-	require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &all))
-	require.Len(t, all.Items, 2)
-	require.Equal(t, int64(2), all.Total)
-	require.Equal(t, 1, all.Page)
-	require.Equal(t, 20, all.PageSize)
-
-	rr = testutil.DoGet(t, router, "/api/v1/documents?status=RESOLVED")
-	require.Equal(t, http.StatusOK, rr.Code)
-	var resolved api.ListResponse
-	require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &resolved))
-	require.Len(t, resolved.Items, 1)
-	require.Equal(t, "doc-1", resolved.Items[0].DocumentID)
-	require.Equal(t, int64(1), resolved.Total)
-
-	rr = testutil.DoGet(t, router, "/api/v1/documents?page=2&page_size=1")
-	require.Equal(t, http.StatusOK, rr.Code)
-	var paged api.ListResponse
-	require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &paged))
-	require.Len(t, paged.Items, 1)
-	require.Equal(t, int64(2), paged.Total)
-	require.Equal(t, 2, paged.Page)
-}
-
-func TestHandler_List_FilterBySummaryStatus(t *testing.T) {
-	router, svc := newTestRouter()
-	seedCompleted(t, svc, "doc-1", "chk-1", "a", "resumen 1")
-	seedPending(t, svc, "doc-2", "chk-2", "b")
-	seedWithStatus(t, svc, "doc-3", "chk-3", "c", domain.SummaryNotRequested)
-	seedWithStatus(t, svc, "doc-4", "chk-4", "d", domain.SummaryFailed)
-
-	rr := testutil.DoGet(t, router, "/api/v1/documents?status=PENDING")
-	require.Equal(t, http.StatusOK, rr.Code)
-	var pending api.ListResponse
-	require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &pending))
-	require.Len(t, pending.Items, 1)
-	require.Equal(t, "doc-2", pending.Items[0].DocumentID)
-	require.Equal(t, int64(1), pending.Total)
-
-	rr = testutil.DoGet(t, router, "/api/v1/documents?status=NOT_REQUESTED")
-	require.Equal(t, http.StatusOK, rr.Code)
-	var notreq api.ListResponse
-	require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &notreq))
-	require.Len(t, notreq.Items, 1)
-	require.Equal(t, "doc-3", notreq.Items[0].DocumentID)
-	require.Equal(t, int64(1), notreq.Total)
-
-	rr = testutil.DoGet(t, router, "/api/v1/documents?status=FAILED")
-	require.Equal(t, http.StatusOK, rr.Code)
-	var failed api.ListResponse
-	require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &failed))
-	require.Len(t, failed.Items, 0)
-	require.Equal(t, int64(0), failed.Total)
-}
-
-func TestHandler_List_InvalidStatus_BadRequest(t *testing.T) {
-	router, _ := newTestRouter()
-
-	rr := testutil.DoGet(t, router, "/api/v1/documents?status=HECHO")
-
-	require.Equal(t, http.StatusBadRequest, rr.Code)
-	requireErrorBody(t, rr, "invalid_request", "invalid status")
-}
-
-func TestHandler_List_InvalidCreatedFrom_BadRequest(t *testing.T) {
-	router, _ := newTestRouter()
-
-	rr := testutil.DoGet(t, router, "/api/v1/documents?created_from=no-es-fecha")
-
-	require.Equal(t, http.StatusBadRequest, rr.Code)
-	requireErrorBody(t, rr, "invalid_request", "invalid created_from")
 }
 
 func TestHandler_DownloadOriginal_OK(t *testing.T) {

@@ -67,3 +67,11 @@ func summaryTimeMS(doc domain.Document) *int64 {
 	}
 	return &doc.SummaryTimeMS
 }
+
+func listResponse(items []domain.Document, total int64, page, pageSize int) ListResponse {
+	resp := make([]DocumentResponse, len(items))
+	for i, doc := range items {
+		resp[i] = toResponse(doc)
+	}
+	return ListResponse{Items: resp, Total: total, Page: page, PageSize: pageSize}
+}

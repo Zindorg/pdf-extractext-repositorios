@@ -2,11 +2,7 @@ package api
 
 import (
 	"context"
-	"fmt"
 	"net/http"
-	"net/url"
-	"strconv"
-	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/marco/pdf-extractext-repositorios/internal/domain"
@@ -101,18 +97,6 @@ func (h *DocumentHandler) DownloadSummary(c *gin.Context) {
 	h.serveText(c, *doc.Summary, "summary-"+doc.DocumentID+".txt")
 }
 
-// summaryError separa "todavía no está" (409) de "no existe ni va a existir" (404).
-func summaryError(doc domain.Document) error {
-	switch {
-	case doc.HasSummary():
-		return nil
-	case doc.SummaryStatus == domain.SummaryPending:
-		return domain.ErrSummaryPending
-	default:
-		return domain.ErrSummaryNotAvailable
-	}
-}
-
 func (h *DocumentHandler) SoftDelete(c *gin.Context) {
 	if err := h.service.SoftDelete(c.Request.Context(), c.Param("document_id")); err != nil {
 		abortWithError(c, err)
@@ -137,95 +121,4 @@ func (h *DocumentHandler) Health(c *gin.Context) {
 		}
 	}
 	c.JSON(http.StatusOK, gin.H{"status": "ok"})
-}
-
-// serveText escribe un adjunto text/plain con Content-Disposition RFC 5987.
-func (h *DocumentHandler) serveText(c *gin.Context, text, filename string) {
-	c.Header("Content-Disposition", contentDisposition(filename))
-	c.Data(http.StatusOK, "text/plain; charset=utf-8", []byte(text))
-}
-
-// contentDisposition construye el header de adjunto con nombre no-ASCII
-// mediante el encoding filename*=UTF-8” (RFC 5987).
-func contentDisposition(filename string) string {
-	return "attachment; filename*=UTF-8''" + url.PathEscape(filename)
-}
-
-func downloadFilename(doc domain.Document) string {
-	if doc.Metadata.Filename != "" {
-		return doc.Metadata.Filename
-	}
-	return "document-" + doc.DocumentID + ".txt"
-}
-
-func listResponse(items []domain.Document, total int64, page, pageSize int) ListResponse {
-	resp := make([]DocumentResponse, len(items))
-	for i, doc := range items {
-		resp[i] = toResponse(doc)
-	}
-	return ListResponse{Items: resp, Total: total, Page: page, PageSize: pageSize}
-}
-
-// parseListFilter valida y construye el ListFilter desde la query string.
-func parseListFilter(c *gin.Context) (domain.ListFilter, error) {
-	filter := domain.ListFilter{}
-	var err error
-	if filter.SummaryStatus, err = parseStatus(c.Query("status")); err != nil {
-		return filter, err
-	}
-	if s := c.Query("filename"); s != "" {
-		filter.Filename = &s
-	}
-	if filter.CreatedFrom, err = parseTimeQuery(c.Query("created_from"), "created_from"); err != nil {
-		return filter, err
-	}
-	if filter.CreatedTo, err = parseTimeQuery(c.Query("created_to"), "created_to"); err != nil {
-		return filter, err
-	}
-	filter.IncludeDeleted = c.Query("include_deleted") == "true"
-	return filter, nil
-}
-
-func parseStatus(raw string) (*domain.SummaryStatus, error) {
-	if raw == "" {
-		return nil, nil
-	}
-	switch s := domain.SummaryStatus(raw); s {
-	case domain.SummaryNotRequested, domain.SummaryPending, domain.SummaryResolved, domain.SummaryFailed:
-		return &s, nil
-	default:
-		return nil, fmt.Errorf("invalid status")
-	}
-}
-
-func parseTimeQuery(raw, name string) (*time.Time, error) {
-	if raw == "" {
-		return nil, nil
-	}
-	t, err := time.Parse(time.RFC3339, raw)
-	if err != nil {
-		return nil, fmt.Errorf("invalid %s", name)
-	}
-	return &t, nil
-}
-
-func parsePagination(c *gin.Context) (int, int, error) {
-	page, err := strconv.Atoi(c.DefaultQuery("page", "1"))
-	if err != nil {
-		return 0, 0, fmt.Errorf("invalid page")
-	}
-	pageSize, err := strconv.Atoi(c.DefaultQuery("page_size", strconv.Itoa(domain.DefaultPageSize)))
-	if err != nil {
-		return 0, 0, fmt.Errorf("invalid page_size")
-	}
-	return page, pageSize, nil
-}
-
-// abortBadRequest responde 400 con code BAD_REQUEST para errores de
-// validación HTTP (no son errores de dominio: no pasan por errorMappings).
-func abortBadRequest(c *gin.Context, err error) {
-	c.AbortWithStatusJSON(http.StatusBadRequest, ErrorEnvelope{
-		Code:    "invalid_request",
-		Message: err.Error(),
-	})
 }

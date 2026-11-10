@@ -55,3 +55,12 @@ func abortWithError(c *gin.Context, err error) {
 		Message: err.Error(),
 	})
 }
+
+// abortBadRequest responde 400 con code BAD_REQUEST para errores de
+// validación HTTP (no son errores de dominio: no pasan por errorMappings).
+func abortBadRequest(c *gin.Context, err error) {
+	c.AbortWithStatusJSON(http.StatusBadRequest, ErrorEnvelope{
+		Code:    "invalid_request",
+		Message: err.Error(),
+	})
+}

@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/marco/pdf-extractext-repositorios/internal/api"
@@ -51,6 +52,38 @@ func (unhealthy) Ping() error { return errors.New("down") }
 // newRouter monta la API sobre el service con el health check indicado.
 func newRouter(service *application.DocumentService, health api.HealthChecker) *gin.Engine {
 	return api.NewRouter(api.NewDocumentHandler(service, health))
+}
+
+// newTestRouter construye la API sobre el MemoryRepository compartido (testutil)
+// con el DocumentService real, de modo que los tests ejercen handler + service.
+func newTestRouter() (*gin.Engine, *application.DocumentService) {
+	repo := testutil.NewMemoryRepository()
+	service := application.NewDocumentService(repo)
+	return newRouter(service, healthy{}), service
+}
+
+// seedPending inserta un documento PENDING vía el servicio.
+func seedPending(t *testing.T, svc *application.DocumentService, id, checksum, text string) {
+	t.Helper()
+	seedWithStatus(t, svc, id, checksum, text, domain.SummaryPending)
+}
+
+// seedWithStatus inserta un documento con el estado de resumen indicado vía el servicio.
+func seedWithStatus(t *testing.T, svc *application.DocumentService, id, checksum, text string, status domain.SummaryStatus) {
+	t.Helper()
+	doc := testutil.NewDoc(id, "mi archivo.pdf", checksum, status, time.Now().UTC())
+	doc.ExtractedText = text
+	doc.ExtractionTimeMS = 342
+	_, err := svc.CreatePending(context.Background(), doc)
+	require.NoError(t, err)
+}
+
+// seedCompleted inserta un documento con el resumen resuelto vía el servicio.
+func seedCompleted(t *testing.T, svc *application.DocumentService, id, checksum, text, summary string) {
+	t.Helper()
+	seedPending(t, svc, id, checksum, text)
+	_, err := svc.CompleteWithSummary(context.Background(), id, summary, 120)
+	require.NoError(t, err)
 }
 
 // documentResponse hace GET y devuelve el DTO y el JSON crudo de la respuesta.
