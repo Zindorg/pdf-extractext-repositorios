@@ -20,6 +20,7 @@ import (
 	"github.com/marco/pdf-extractext-repositorios/internal/domain"
 	"github.com/marco/pdf-extractext-repositorios/internal/logging"
 	"github.com/redis/go-redis/v9"
+	"go.mongodb.org/mongo-driver/v2/bson"
 	"go.mongodb.org/mongo-driver/v2/mongo"
 	"go.mongodb.org/mongo-driver/v2/mongo/options"
 	"go.mongodb.org/mongo-driver/v2/mongo/readpref"
@@ -32,6 +33,117 @@ const (
 	shutdownTimeout   = 10 * time.Second // graceful shutdown
 )
 
+// CLI subcommands para admin processes (12 Factor XII)
+func runMigrate(cfg *config.Config) error {
+	ctx := context.Background()
+	client, err := mongo.Connect(options.Client().ApplyURI(cfg.MongoDBURI))
+	if err != nil {
+		return fmt.Errorf("mongo connect: %w", err)
+	}
+	defer client.Disconnect(ctx)
+
+	db := client.Database(cfg.MongoDBDatabase)
+	repo := mongodb.NewMongoDocumentRepository(db)
+	return repo.EnsureIndexes(ctx)
+}
+
+func runReindex(cfg *config.Config) error {
+	ctx := context.Background()
+	client, err := mongo.Connect(options.Client().ApplyURI(cfg.MongoDBURI))
+	if err != nil {
+		return fmt.Errorf("mongo connect: %w", err)
+	}
+	defer client.Disconnect(ctx)
+
+	db := client.Database(cfg.MongoDBDatabase)
+	// Drop indexes
+	indexes := []string{"uq_document_id", "uq_checksum_active", "ix_filename", "ix_created_at", "ix_summary_status"}
+	for _, name := range indexes {
+		_ = db.Collection("documents").Indexes().DropOne(ctx, name)
+	}
+	// Recreate
+	repo := mongodb.NewMongoDocumentRepository(db)
+	return repo.EnsureIndexes(ctx)
+}
+
+func runCleanupDLQ(cfg *config.Config, requeue bool) error {
+	ctx := context.Background()
+	client := redis.NewClient(&redis.Options{Addr: cfg.RedisAddr})
+	defer client.Close()
+
+	if err := client.Ping(ctx).Err(); err != nil {
+		return fmt.Errorf("redis ping: %w", err)
+	}
+
+	dlq := cfg.DLQName
+	if dlq == "" {
+		dlq = "document-events-dlq"
+	}
+
+	// Listar mensajes
+	msgs, err := client.XRange(ctx, dlq, "-", "+").Result()
+	if err != nil {
+		return fmt.Errorf("xrange dlq: %w", err)
+	}
+
+	fmt.Printf("DLQ %s: %d mensajes\n", dlq, len(msgs))
+	for _, m := range msgs {
+		fmt.Printf("  ID: %s, document_id: %s\n", m.ID, m.Values["document_id"])
+	}
+
+	if requeue && len(msgs) > 0 {
+		stream := cfg.StreamName
+		if stream == "" {
+			stream = "document-events"
+		}
+		for _, m := range msgs {
+			payload := m.Values["payload"]
+			docID := m.Values["document_id"]
+			err := client.XAdd(ctx, &redis.XAddArgs{
+				Stream: stream,
+				Values: map[string]any{"document_id": docID, "payload": payload},
+			}).Err()
+			if err != nil {
+				return fmt.Errorf("requeue %s: %w", docID, err)
+			}
+			_ = client.XDel(ctx, dlq, m.ID).Err()
+		}
+		fmt.Printf("Re-encolados %d mensajes a %s\n", len(msgs), stream)
+	}
+	return nil
+}
+
+func runRestoreByChecksum(cfg *config.Config, checksum string) error {
+	if checksum == "" {
+		return fmt.Errorf("checksum requerido")
+	}
+	ctx := context.Background()
+	client, err := mongo.Connect(options.Client().ApplyURI(cfg.MongoDBURI))
+	if err != nil {
+		return fmt.Errorf("mongo connect: %w", err)
+	}
+	defer client.Disconnect(ctx)
+
+	db := client.Database(cfg.MongoDBDatabase)
+
+	// Buscar doc soft-deleted con ese checksum
+	filter := bson.M{"checksum": checksum, "deleted_at": bson.M{"$ne": nil}}
+	var pd struct {
+		DocumentID string `bson:"document_id"`
+	}
+	err = db.Collection("documents").FindOne(ctx, filter).Decode(&pd)
+	if err != nil {
+		if err == mongo.ErrNoDocuments {
+			return fmt.Errorf("no hay documento soft-deleted con checksum %s", checksum)
+		}
+		return fmt.Errorf("find: %w", err)
+	}
+
+	// Restore via repo
+	domainRepo := mongodb.NewMongoDocumentRepository(db)
+	return domainRepo.Restore(ctx, pd.DocumentID)
+}
+
 func main() {
 	cfg, err := config.Load()
 	if err != nil {
@@ -42,6 +154,37 @@ func main() {
 	// Setup structured logging
 	logging.Setup(cfg.LogLevelParsed())
 	slog.Info("starting persister", "version", "dev")
+
+	// Subcomandos admin (12 Factor XII)
+	if len(os.Args) > 1 {
+		var err error
+		switch os.Args[1] {
+		case "migrate":
+			err = runMigrate(cfg)
+		case "reindex":
+			err = runReindex(cfg)
+		case "cleanup-dlq":
+			requeue := false
+			if len(os.Args) > 2 && os.Args[2] == "--requeue" {
+				requeue = true
+			}
+			err = runCleanupDLQ(cfg, requeue)
+		case "restore-by-checksum":
+			if len(os.Args) < 3 {
+				fmt.Fprintln(os.Stderr, "usage: restore-by-checksum <checksum>")
+				os.Exit(1)
+			}
+			err = runRestoreByChecksum(cfg, os.Args[2])
+		default:
+			fmt.Fprintf(os.Stderr, "unknown command: %s\n", os.Args[1])
+			os.Exit(1)
+		}
+		if err != nil {
+			slog.Error("command failed", "error", err)
+			os.Exit(1)
+		}
+		return
+	}
 
 	if err := run(cfg); err != nil {
 		slog.Error("fatal", "error", err)
