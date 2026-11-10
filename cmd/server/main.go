@@ -10,6 +10,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/marco/pdf-extractext-repositorios/internal/adapters/cache"
 	"github.com/marco/pdf-extractext-repositorios/internal/adapters/health"
 	"github.com/marco/pdf-extractext-repositorios/internal/adapters/mongodb"
 	redisadapter "github.com/marco/pdf-extractext-repositorios/internal/adapters/redis"
@@ -75,13 +76,13 @@ func (i *infra) close() {
 
 // startInfra conecta Mongo (ping + índices) y Redis (ping).
 func startInfra(ctx context.Context, cfg *config.Config) (*infra, error) {
-	mongoClient, repo, err := startMongo(ctx, cfg.MongoDBURI, cfg.MongoDBDatabase, cfg)
+	redisClient, err := startRedis(ctx, cfg.RedisAddr)
 	if err != nil {
 		return nil, err
 	}
-	redisClient, err := startRedis(ctx, cfg.RedisAddr)
+	mongoClient, repo, err := startMongo(ctx, cfg.MongoDBURI, cfg.MongoDBDatabase, cfg, redisClient)
 	if err != nil {
-		_ = mongoClient.Disconnect(context.Background())
+		_ = redisClient.Close()
 		return nil, err
 	}
 	return &infra{mongo: mongoClient, redis: redisClient, repo: repo}, nil
@@ -89,7 +90,7 @@ func startInfra(ctx context.Context, cfg *config.Config) (*infra, error) {
 
 // startMongo conecta, verifica tempranamente (si Mongo no responde, no
 // arrancamos) y prepara los índices. El dueño del cliente es el caller.
-func startMongo(ctx context.Context, uri, dbName string, cfg *config.Config) (*mongo.Client, domain.DocumentRepository, error) {
+func startMongo(ctx context.Context, uri, dbName string, cfg *config.Config, redisClient *redis.Client) (*mongo.Client, domain.DocumentRepository, error) {
 	client, err := mongo.Connect(options.Client().ApplyURI(uri))
 	if err != nil {
 		return nil, nil, fmt.Errorf("mongo connect: %w", err)
@@ -109,7 +110,10 @@ func startMongo(ctx context.Context, uri, dbName string, cfg *config.Config) (*m
 	}
 
 	cb := mongodb.NewCircuitBreaker(cfg.CBFailures, 2, cfg.CBTimeout)
-	repo := mongodb.NewCircuitBreakerRepository(baseRepo, cb)
+	var repo domain.DocumentRepository = mongodb.NewCircuitBreakerRepository(baseRepo, cb)
+
+	// Cache read-through (cache outermost, CB inner, Mongo innermost)
+	repo = cache.NewCachedRepository(repo, redisClient, cfg.CacheTTL)
 
 	return client, repo, nil
 }
