@@ -22,6 +22,7 @@ func TestHTTPStatusFor(t *testing.T) {
 		{name: "duplicate checksum", err: domain.ErrDuplicateChecksum, want: http.StatusConflict},
 		{name: "restore conflict", err: domain.ErrRestoreConflict, want: http.StatusConflict},
 		{name: "summary not ready", err: domain.ErrSummaryPending, want: http.StatusConflict},
+		{name: "rate limited", err: domain.ErrRateLimited, want: http.StatusTooManyRequests},
 		{name: "wrapped domain error", err: fmt.Errorf("capa: %w", domain.ErrNotFound), want: http.StatusNotFound},
 		{name: "root cause wins", err: fmt.Errorf("capa: %w", domain.ErrDuplicateChecksum), want: http.StatusConflict},
 		{name: "unknown error", err: errors.New("boom"), want: http.StatusInternalServerError},
@@ -44,6 +45,7 @@ func TestErrorCodeFor(t *testing.T) {
 		{name: "restore conflict", err: domain.ErrRestoreConflict, want: "checksum_conflict"},
 		{name: "summary not ready", err: domain.ErrSummaryPending, want: "summary_pending"},
 		{name: "summary not available", err: domain.ErrSummaryNotAvailable, want: "summary_not_available"},
+		{name: "rate limited", err: domain.ErrRateLimited, want: "rate_limited"},
 		{name: "unknown error", err: errors.New("boom"), want: "INTERNAL_ERROR"},
 	}
 	for _, tc := range cases {
@@ -89,6 +91,7 @@ func TestAbortWithError_DomainErrorsKeepOriginalMessage(t *testing.T) {
 		{"restore conflict", domain.ErrRestoreConflict, "checksum_conflict", "restore conflict: checksum already in use"},
 		{"summary pending", domain.ErrSummaryPending, "summary_pending", "summary not ready"},
 		{"summary not available", domain.ErrSummaryNotAvailable, "summary_not_available", "summary not available"},
+		{"rate limited", domain.ErrRateLimited, "rate_limited", "rate limit exceeded"},
 	}
 
 	for _, tt := range tests {
