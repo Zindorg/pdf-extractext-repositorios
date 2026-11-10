@@ -51,7 +51,7 @@ func (unhealthy) Ping() error { return errors.New("down") }
 
 // newRouter monta la API sobre el service con el health check indicado.
 func newRouter(service *application.DocumentService, health api.HealthChecker) *gin.Engine {
-	return api.NewRouter(api.NewDocumentHandler(service, health))
+	return api.NewRouter(api.NewDocumentHandler(service, health), 0, 0)
 }
 
 // newTestRouter construye la API sobre el MemoryRepository compartido (testutil)

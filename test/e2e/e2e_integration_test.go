@@ -88,7 +88,7 @@ func setupE2E(t *testing.T) (*httptest.Server, *redis.Client, *mongo.Client, str
 
 	// HTTP server
 	handler := api.NewDocumentHandler(service, health.NewPinger(mongoCli, redisCli))
-	router := api.NewRouter(handler)
+	router := api.NewRouter(handler, 0, 0)
 	srv := httptest.NewServer(router)
 	t.Cleanup(srv.Close)
 
