@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
 	"net/http"
 	"os"
 	"os/signal"
@@ -17,10 +16,12 @@ import (
 	"github.com/marco/pdf-extractext-repositorios/internal/api"
 	"github.com/marco/pdf-extractext-repositorios/internal/application"
 	"github.com/marco/pdf-extractext-repositorios/internal/config"
+	"github.com/marco/pdf-extractext-repositorios/internal/logging"
 	"github.com/redis/go-redis/v9"
 	"go.mongodb.org/mongo-driver/v2/mongo"
 	"go.mongodb.org/mongo-driver/v2/mongo/options"
 	"go.mongodb.org/mongo-driver/v2/mongo/readpref"
+	"log/slog"
 )
 
 const (
@@ -30,17 +31,23 @@ const (
 )
 
 func main() {
-	if err := run(); err != nil {
-		log.Fatalf("fatal: %v", err)
+	cfg, err := config.Load()
+	if err != nil {
+		slog.Error("config load failed", "error", err)
+		os.Exit(1)
+	}
+
+	// Setup structured logging
+	logging.Setup(cfg.LogLevelParsed())
+	slog.Info("starting persister", "version", "dev")
+
+	if err := run(cfg); err != nil {
+		slog.Error("fatal", "error", err)
+		os.Exit(1)
 	}
 }
 
-func run() error {
-	cfg, err := config.Load()
-	if err != nil {
-		return err
-	}
-
+func run(cfg *config.Config) error {
 	rootCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
@@ -123,14 +130,14 @@ func serveHTTP(rootCtx context.Context, cfg *config.Config, inf *infra) error {
 	}
 
 	server := newServer(cfg, service, inf)
-	log.Printf("servidor HTTP escuchando en :%s", cfg.HTTPPort)
+	slog.Info("servidor HTTP escuchando", "port", cfg.HTTPPort)
 	errCh := listenAndServe(server)
 
 	select {
 	case err := <-errCh:
 		return err
 	case <-rootCtx.Done():
-		log.Println("apagando…")
+		slog.Info("apagando…")
 	}
 	return shutdown(server)
 }
@@ -148,7 +155,7 @@ func startConsumer(ctx context.Context, cfg *config.Config, inf *infra, service 
 	}
 	go func() {
 		if err := consumer.Run(ctx); err != nil {
-			log.Printf("stream consumer: %v", err)
+			slog.Error("stream consumer stopped", "error", err)
 		}
 	}()
 	return nil
@@ -180,5 +187,10 @@ func listenAndServe(server *http.Server) <-chan error {
 func shutdown(server *http.Server) error {
 	ctx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
 	defer cancel()
-	return server.Shutdown(ctx)
+	if err := server.Shutdown(ctx); err != nil {
+		slog.Error("server shutdown failed", "error", err)
+		return err
+	}
+	slog.Info("server stopped gracefully")
+	return nil
 }

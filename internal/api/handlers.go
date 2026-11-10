@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"log/slog"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
@@ -116,6 +117,7 @@ func (h *DocumentHandler) Restore(c *gin.Context) {
 func (h *DocumentHandler) Health(c *gin.Context) {
 	if h.health != nil {
 		if err := h.health.Ping(); err != nil {
+			slog.Error("health check failed", "error", err)
 			c.JSON(http.StatusServiceUnavailable, gin.H{"status": "error"})
 			return
 		}

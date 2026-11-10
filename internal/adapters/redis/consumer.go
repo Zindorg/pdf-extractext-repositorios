@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -134,7 +134,7 @@ func (c *StreamConsumer) processLote(ctx context.Context, messages []redis.XMess
 			if ctx.Err() != nil {
 				return err // cancelación: Run la traduce en nil
 			}
-			log.Printf("stream: %s: %v", msg.ID, err)
+			slog.Error("stream message processing failed", "msg_id", msg.ID, "error", err)
 		}
 	}
 	return nil

@@ -2,9 +2,12 @@ package config
 
 import (
 	"fmt"
+	"log/slog"
 	"os"
 	"strconv"
 	"time"
+
+	"github.com/marco/pdf-extractext-repositorios/internal/logging"
 )
 
 const (
@@ -35,10 +38,19 @@ type Config struct {
 	LogLevel        string
 }
 
+// LogLevelParsed returns the parsed slog.Level from LogLevel.
+func (c *Config) LogLevelParsed() slog.Level {
+	return logging.ParseLevel(c.LogLevel)
+}
+
 func Load() (*Config, error) {
 	cfg := stringConfig()
 	if err := loadNumbers(cfg); err != nil {
 		return nil, err
+	}
+	// Validate LOG_LEVEL
+	if cfg.LogLevel != "" {
+		_ = cfg.LogLevelParsed() // will use default if invalid
 	}
 	return cfg, nil
 }

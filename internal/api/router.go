@@ -9,8 +9,9 @@ import (
 // No hay POST /documents: la creación llega solo por stream.
 func NewRouter(handler *DocumentHandler) *gin.Engine {
 	r := gin.New()
-	r.Use(gin.Logger(), gin.Recovery())
 	r.Use(middleware.RequestID())
+	r.Use(middleware.AccessLog())
+	r.Use(gin.Recovery())
 
 	v1 := r.Group("/api/v1")
 	{

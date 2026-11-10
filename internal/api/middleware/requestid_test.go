@@ -35,36 +35,33 @@ func TestRequestID_PropagatesHeader(t *testing.T) {
 	require.Equal(t, "req-123", w.Header().Get("X-Request-ID"))
 }
 
-// TestRequestID_NoHeader_DoesNotSet: sin cabecera, o con cabecera vacía, la
-// petición no recibe request_id ni lo propaga en la respuesta.
-func TestRequestID_NoHeader_DoesNotSet(t *testing.T) {
-	cases := map[string]bool{
-		"sin cabecera":   false,
-		"cabecera vacía": true,
+// TestRequestID_GeneratesIfMissing: sin cabecera o con cabecera vacía,
+// el middleware genera un nuevo request_id y lo propaga en la respuesta.
+func TestRequestID_GeneratesIfMissing(t *testing.T) {
+	cases := []struct {
+		name           string
+		setEmptyHeader bool
+	}{
+		{"sin cabecera", false},
+		{"cabecera vacía", true},
 	}
 
-	for name, withEmptyHeader := range cases {
-		t.Run(name, func(t *testing.T) {
-			requireNoRequestID(t, withEmptyHeader)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			r := newRequestIDRouter(t, func(c *gin.Context) {
+				v, ok := c.Get("request_id")
+				require.True(t, ok)
+				require.NotEmpty(t, v)
+			})
+
+			req := httptest.NewRequest(http.MethodGet, "/", nil)
+			if tc.setEmptyHeader {
+				req.Header.Set("X-Request-ID", "")
+			}
+			w := httptest.NewRecorder()
+			r.ServeHTTP(w, req)
+
+			require.NotEmpty(t, w.Header().Get("X-Request-ID"))
 		})
 	}
-}
-
-// requireNoRequestID comprueba que la petición no recibe request_id ni la
-// cabecera de respuesta.
-func requireNoRequestID(t *testing.T, withEmptyHeader bool) {
-	t.Helper()
-	r := newRequestIDRouter(t, func(c *gin.Context) {
-		_, ok := c.Get("request_id")
-		require.False(t, ok)
-	})
-
-	req := httptest.NewRequest(http.MethodGet, "/", nil)
-	if withEmptyHeader {
-		req.Header.Set("X-Request-ID", "")
-	}
-	w := httptest.NewRecorder()
-	r.ServeHTTP(w, req)
-
-	require.Empty(t, w.Header().Get("X-Request-ID"))
 }

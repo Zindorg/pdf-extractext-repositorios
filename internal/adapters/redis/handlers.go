@@ -3,6 +3,7 @@ package redis
 import (
 	"context"
 	"errors"
+	"log/slog"
 
 	"github.com/marco/pdf-extractext-repositorios/internal/application"
 	"github.com/marco/pdf-extractext-repositorios/internal/domain"
@@ -74,6 +75,7 @@ func (h *MessageHandlers) OnSummaryResolved(ctx context.Context, ev *SummaryReso
 
 func swallowDuplicate(err error) error {
 	if errors.Is(err, domain.ErrDuplicateDocumentID) || errors.Is(err, domain.ErrDuplicateChecksum) {
+		slog.Debug("duplicate event ignored", "error", err)
 		return nil
 	}
 	return err
