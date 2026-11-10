@@ -27,6 +27,7 @@ func TestLoadWithDefaults(t *testing.T) {
 	t.Setenv("RATE_LIMIT_BURST", "")
 	t.Setenv("CB_FAILURES", "")
 	t.Setenv("CB_TIMEOUT", "")
+	t.Setenv("CACHE_TTL", "")
 
 	cfg, err := config.Load()
 	require.NoError(t, err)
@@ -47,6 +48,7 @@ func TestLoadWithDefaults(t *testing.T) {
 	require.Equal(t, 200, cfg.RateLimitBurst)
 	require.Equal(t, 5, cfg.CBFailures)
 	require.Equal(t, 30*time.Second, cfg.CBTimeout)
+	require.Equal(t, 60*time.Second, cfg.CacheTTL)
 }
 
 func TestLoadFromEnv(t *testing.T) {
@@ -66,6 +68,7 @@ func TestLoadFromEnv(t *testing.T) {
 	t.Setenv("RATE_LIMIT_BURST", "100")
 	t.Setenv("CB_FAILURES", "3")
 	t.Setenv("CB_TIMEOUT", "10s")
+	t.Setenv("CACHE_TTL", "30s")
 
 	cfg, err := config.Load()
 	require.NoError(t, err)
@@ -86,6 +89,7 @@ func TestLoadFromEnv(t *testing.T) {
 	require.Equal(t, 100, cfg.RateLimitBurst)
 	require.Equal(t, 3, cfg.CBFailures)
 	require.Equal(t, 10*time.Second, cfg.CBTimeout)
+	require.Equal(t, 30*time.Second, cfg.CacheTTL)
 }
 
 func TestLoad_ConsumerName_DefaultFormat(t *testing.T) {
@@ -133,6 +137,13 @@ func TestLoadInvalidCBFailures(t *testing.T) {
 
 func TestLoadInvalidCBTimeout(t *testing.T) {
 	t.Setenv("CB_TIMEOUT", "abc")
+
+	_, err := config.Load()
+	require.Error(t, err)
+}
+
+func TestLoadInvalidCacheTTL(t *testing.T) {
+	t.Setenv("CACHE_TTL", "abc")
 
 	_, err := config.Load()
 	require.Error(t, err)
