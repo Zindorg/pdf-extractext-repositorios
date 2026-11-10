@@ -1,4 +1,4 @@
-.PHONY: build run test test-integration test-e2e vet lint compose-up compose-down logs compose-mongo compose-redis compose-app
+.PHONY: build run test test-integration test-e2e vet lint compose-up compose-down logs compose-mongo compose-redis compose-app compose-consul
 
 build:
 	go build -o bin/persister ./cmd/server
@@ -35,12 +35,16 @@ compose-redis:
 compose-app:
 	docker compose -f docker-compose.app.yml up -d --build
 
+compose-consul:
+	docker compose -f docker-compose.consul.yml up -d
+
 compose-up: compose-mongo compose-redis compose-app
 
 compose-down:
 	docker compose -f docker-compose.mongo.yml down
 	docker compose -f docker-compose.redis.yml down
 	docker compose -f docker-compose.app.yml down
+	docker compose -f docker-compose.consul.yml down
 
 logs:
 	docker compose -f docker-compose.app.yml logs -f persister

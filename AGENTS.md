@@ -68,6 +68,7 @@ go mod tidy -diff
 docker compose -f docker-compose.mongo.yml config -q
 docker compose -f docker-compose.redis.yml config -q
 docker compose -f docker-compose.app.yml config -q
+docker compose -f docker-compose.consul.yml config -q
 ```
 
 Todo debe quedar en verde; si `make lint` formatea un archivo, incluirlo en

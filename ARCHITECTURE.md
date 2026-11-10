@@ -372,7 +372,7 @@ Envelope de error consistente: `{"code": "...", "message": "...", "details": {..
 
 - **Config**: env vars con defaults (`HTTP_PORT`, `MONGODB_URI`, `MONGODB_DATABASE`, `REDIS_ADDR`, `STREAM_NAME`, `STREAM_GROUP`, `DLQ_NAME`, `RETRY_MAX`, `RETRY_BACKOFF`, `MAX_TEXT_BYTES`, `LOG_LEVEL`) — 12-factor.
 - **Errores**: errores de dominio → HTTP vía mapeo central único en `internal/api/errors.go` (`document_not_found` 404, `summary_not_available` 404, `summary_pending`/`checksum_conflict` 409, `invalid_request` 400). Validación HTTP en `List` usa `invalid_request`.
-- **Observabilidad**: logger de acceso (Gin), `/health` con ping a Mongo y Redis (consumido por el Orquestador para detectar disponibilidad). Middleware de request-ID (`X-Request-ID`): implementado; propaga el header si viene, no lo genera.
+- **Observabilidad**: logger de acceso (Gin), `/health` con ping a Mongo y Redis (consumido por el Orquestador para detectar disponibilidad). Middleware de request-ID (`X-Request-ID`): implementado; propaga el header si viene, no lo genera. **Opcional**: catálogo Consul con health check cada 10 s (ADR-009) — ver `docker-compose.consul.yml` y `consul/config/persister.hcl`.
 - **Seguridad**: sin auth en MVP (red interna) — extensible con middleware de API key/JWT. `MAX_TEXT_BYTES` limita `extracted_text` en la ingesta (por encima ⇒ retry → DLQ); el default `15 << 20` queda por debajo del límite de 16 MiB por documento de MongoDB.
 - **Validación**: en DTOs y eventos (binding + validator) para los bordes; reglas de negocio en el servicio.
 
@@ -390,13 +390,14 @@ Live en `docs/adr/`:
 - **ADR-006 — Hub & Spoke con URL interna (no Traefik en este servicio)**: este microservicio NO se expone por Traefik; el Orquestador lo alcanza por nombre de servicio Docker (`http://persister:8083`), cumpliendo "URL, nunca IP" sin romper el aislamiento (spec §2.1/§7). Traefik solo enruta hacia el Orquestador (red pública).
 - **ADR-007 — Reconocimiento del contrato de eventos del Orquestador (delta-persister)**: se adoptan los deltas 1–6 (`summary_resolved`, `extraction_time_ms`/`summary_time_ms`, `schema_version`, `event_type` con fallback a `event`, `summary_requested`/`summary_status`, `mime_type` top-level); se aplican 7–12 (el 7 —request-ID— con el middleware que propaga `X-Request-ID`; el 12 —`summary_pending` 409— en el Slice 7). Mensajes inválidos ⇒ retry → DLQ; sin idempotencia por `event_id`.
 - **ADR-008 — Swagger/OpenAPI**: descartado para el MVP; el contrato HTTP vive en §10. Reversible con un nuevo ADR si el ecosistema lo requiere.
+- **ADR-009 — Registro en Consul (catálogo + health check)**: registro estático del servicio `persister` con check HTTP contra `/api/v1/health`; no reemplaza DNS de Docker ni labels de Traefik; opt-in vía `make compose-consul`.
 
 ---
 
 ## 13. Arquitectura de despliegue
 
 - `Dockerfile` multi-stage: `golang:1.26-alpine` (build) → `distroless` nonroot (binario ~10MB, sin shell).
-- **Un `docker-compose` por componente de ESTE microservicio**: `docker-compose.mongo.yml`, `docker-compose.redis.yml` y `docker-compose.app.yml`, encadenables con `make compose-up` (ordena mongo → redis → app). **Traefik NO vive en estos composes**: pertenece al ecosistema y solo expone al Orquestador. La app crea los índices y el consumer group al arrancar; no hay servicio de migraciones.
+- **Un `docker-compose` por componente de ESTE microservicio**: `docker-compose.mongo.yml`, `docker-compose.redis.yml`, `docker-compose.app.yml` y **opcional** `docker-compose.consul.yml`, encadenables con `make compose-up` (ordena mongo → redis → app) y `make compose-consul` (opt-in). **Traefik NO vive en estos composes**: pertenece al ecosistema y solo expone al Orquestador. La app crea los índices y el consumer group al arrancar; no hay servicio de migraciones.
 - Redes: `mired` (**externa**, compartida con el ecosistema: aquí viven app y redis) y `db-net` con `internal: true` (creada por el compose de mongo; la referencian mongo y app — la única con acceso a la BD).
 - **Endurecimiento**: los puertos se publican solo en `127.0.0.1` (nunca en la LAN), cada servicio corre con `no-new-privileges:true` y `restart: unless-stopped`, y Mongo/Redis declaran `healthcheck` (la app no puede: imagen distroless sin shell). Mongo corre **standalone** (sin replica set): el código no usa transacciones ni change streams.
 - **Acceso del host a Mongo**: Docker **no publica puertos** de contenedores conectados solo a redes `internal`. Por eso Mongo va dual-homed: `db-net` (internal, ruta privada app↔mongo) **y** `db-dev` (no-internal, con `enable_ip_masquerade=false`), que habilita el puerto en `127.0.0.1` para dev/tests **sin salida a internet**. Sin esto, los tests de integración de Mongo se saltaban en silencio (`t.Skip`).
@@ -474,6 +475,35 @@ services:
 networks:
   mired: { external: true }
   db-net: { external: true }
+```
+
+```yaml
+# docker-compose.consul.yml (opt-in)
+services:
+  consul:
+    image: hashicorp/consul:2.1.0
+    container_name: persister-consul
+    restart: unless-stopped
+    command: ["agent", "-config-dir=/consul/config"]
+    volumes:
+      - ./consul/config:/consul/config
+      - consul_data:/consul/data
+    networks:
+      mired:
+        aliases: [consul]
+    ports: [ "127.0.0.1:8500:8500" ]
+    security_opt: [ no-new-privileges:true ]
+    healthcheck:
+      test: ["CMD", "consul", "members"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+networks:
+  mired: { external: true }
+
+volumes:
+  consul_data:
 ```
 
 - **Comunicación entre microservicios por URL, nunca IP**: el Orquestador llama al Persistidor con `http://persister:8083` y este se conecta a Mongo/Redis por nombre (`mongo`, `redis`), resuelto por DNS en `mired`/`db-net`. Los nombres de servicio son DNS estables que no cambian al re-arrancar el contenedor (el IP sí cambia), cumpliendo el requisito de las "mini-MV".

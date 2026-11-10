@@ -83,6 +83,18 @@ docker exec <orquestador-container> curl -i http://persister:8083/api/v1/health
 
 El servicio expone también labels Traefik (`Host(persister.internal)`) en la red `mired`. El stream `document-events` debe publicarse con `XADD` usando `{"document_id": "...", "payload": "<json>"}` (el consumer lee el campo `payload`).
 
+## Descubrimiento de servicio (Consul)
+
+Opcional. Levanta un agente Consul single-node en la red `mired` que registra `persister` con un health check HTTP contra `/api/v1/health`.
+
+```sh
+make compose-consul
+curl -s http://127.0.0.1:8500/v1/health/service/persister   # Checks[].Status == "passing"
+# UI: http://127.0.0.1:8500/ui
+```
+
+**Qué NO hace:** no reemplaza el DNS de Docker (`http://persister:8083`) ni elimina los labels de Traefik (ver [ADR-009](docs/adr/ADR-009-registro-consul.md)). El check cada 10 s golpea `/health` (ping real a Mongo+Redis); si la app está caída el servicio queda `critical` en el catálogo (no se desregistra).
+
 ## Configuración
 
 | Variable            | Default                                         | Descripción                    |
