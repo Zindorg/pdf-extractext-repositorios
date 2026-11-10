@@ -3,7 +3,7 @@
 # El puerto se publica únicamente en loopback para dev/tests locales.
 services:
   redis:
-    image: redis:7-alpine
+    image: redis:8.10
     container_name: persister-redis
     restart: unless-stopped
     command: ["redis-server", "--appendonly", "yes"]
