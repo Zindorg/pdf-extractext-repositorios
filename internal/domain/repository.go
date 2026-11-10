@@ -16,6 +16,7 @@ type ListFilter struct {
 	SummaryStatus  *SummaryStatus
 	Filename       *string
 	IncludeDeleted bool
+	IncludeText    *bool      // nil/true → incluir extracted_text/summary; false → omitir
 	CreatedFrom    *time.Time // nil → sin límite inferior
 	CreatedTo      *time.Time // nil → sin límite superior
 }
@@ -25,7 +26,7 @@ type ListFilter struct {
 // (el servicio normaliza antes de llamar).
 type DocumentRepository interface {
 	Insert(ctx context.Context, doc Document) error
-	Complete(ctx context.Context, documentID string, summary string, summaryTimeMS int64) (*Document, error)
+	Complete(ctx context.Context, documentID string, summary string, summaryTimeMS int64, resolvedAt *time.Time) (*Document, error)
 	FindByDocumentID(ctx context.Context, documentID string) (*Document, error)
 	FindByChecksum(ctx context.Context, checksum string) (*Document, error)
 	List(ctx context.Context, filter ListFilter, page int, pageSize int) ([]Document, int64, error)

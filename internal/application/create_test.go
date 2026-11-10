@@ -3,6 +3,7 @@ package application_test
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/marco/pdf-extractext-repositorios/internal/domain"
 	"github.com/stretchr/testify/require"
@@ -69,7 +70,8 @@ func TestCompleteWithSummary_CompletesPendingDocument(t *testing.T) {
 
 	seedPending(t, svc, "doc-1", "abc123", "contenido original")
 
-	got, err := svc.CompleteWithSummary(context.Background(), "doc-1", "resumen del doc", 120)
+	now := time.Now().UTC()
+	got, err := svc.CompleteWithSummary(context.Background(), "doc-1", "resumen del doc", 120, &now)
 	require.NoError(t, err)
 	require.NotNil(t, got)
 	require.Equal(t, domain.SummaryResolved, got.SummaryStatus)
@@ -82,7 +84,8 @@ func TestCompleteWithSummary_CompletesPendingDocument(t *testing.T) {
 func TestCompleteWithSummary_OrphanSummary_ReturnsErrNotFound(t *testing.T) {
 	svc, _ := newService()
 
-	_, err := svc.CompleteWithSummary(context.Background(), "no-existe", "resumen huérfano", 120)
+	now := time.Now().UTC()
+	_, err := svc.CompleteWithSummary(context.Background(), "no-existe", "resumen huérfano", 120, &now)
 	require.ErrorIs(t, err, domain.ErrNotFound)
 }
 
@@ -91,11 +94,12 @@ func TestCompleteWithSummary_AlreadyCompleted_IsBenign(t *testing.T) {
 
 	seedPending(t, svc, "doc-1", "abc123", "")
 
-	_, err := svc.CompleteWithSummary(context.Background(), "doc-1", "primera vez", 120)
+	now := time.Now().UTC()
+	_, err := svc.CompleteWithSummary(context.Background(), "doc-1", "primera vez", 120, &now)
 	require.NoError(t, err)
 
 	// Duplicado legítimo (entrega at-least-once): sin error → consumer hace XACK + descarte.
-	_, err = svc.CompleteWithSummary(context.Background(), "doc-1", "otra vez", 200)
+	_, err = svc.CompleteWithSummary(context.Background(), "doc-1", "otra vez", 200, &now)
 	require.NoError(t, err)
 
 	stored, err := repo.FindByDocumentID(context.Background(), "doc-1")

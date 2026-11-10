@@ -31,6 +31,8 @@ type Document struct {
 	Metadata         Metadata      `json:"metadata"`
 	ExtractionTimeMS int64         `json:"extraction_time_ms"`
 	SummaryTimeMS    int64         `json:"summary_time_ms"`
+	ExtractedAt      *time.Time    `json:"extracted_at"` // RFC3339 UTC — momento real del evento original
+	ResolvedAt       *time.Time    `json:"resolved_at"`  // RFC3339 UTC — momento real del evento summary_resolved
 	CreatedAt        time.Time     `json:"created_at"`
 	UpdatedAt        time.Time     `json:"updated_at"`
 	DeletedAt        *time.Time    `json:"deleted_at"` // soft-delete

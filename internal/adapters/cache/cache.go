@@ -32,8 +32,8 @@ func (c *CachedRepository) Insert(ctx context.Context, doc domain.Document) erro
 	return c.repo.Insert(ctx, doc)
 }
 
-func (c *CachedRepository) Complete(ctx context.Context, documentID string, summary string, summaryTimeMS int64) (*domain.Document, error) {
-	doc, err := c.repo.Complete(ctx, documentID, summary, summaryTimeMS)
+func (c *CachedRepository) Complete(ctx context.Context, documentID string, summary string, summaryTimeMS int64, resolvedAt *time.Time) (*domain.Document, error) {
+	doc, err := c.repo.Complete(ctx, documentID, summary, summaryTimeMS, resolvedAt)
 	if err == nil && c.client != nil {
 		c.invalidate(ctx, documentID, doc.Checksum)
 	}

@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
+	"time"
 
 	"github.com/marco/pdf-extractext-repositorios/internal/domain"
 )
@@ -30,18 +32,20 @@ type OriginalEvent struct {
 	MimeType         string          `json:"mime_type"`
 	SummaryRequested bool            `json:"summary_requested"`
 	SummaryStatus    string          `json:"summary_status"`
+	ExtractedAt      *time.Time      `json:"extracted_at,omitempty"` // RFC3339 UTC — momento real del evento
 	Metadata         domain.Metadata `json:"metadata"`
 }
 
 // SummaryResolvedEvent transporta el resumen (evento "summary_resolved").
 type SummaryResolvedEvent struct {
-	EventType     string `json:"event_type"`
-	Event         string `json:"event"`
-	SchemaVersion int    `json:"schema_version"`
-	DocumentID    string `json:"document_id"`
-	Summary       string `json:"summary"`
-	SummaryTimeMS int64  `json:"summary_time_ms"`
-	SummaryStatus string `json:"summary_status"`
+	EventType     string     `json:"event_type"`
+	Event         string     `json:"event"`
+	SchemaVersion int        `json:"schema_version"`
+	DocumentID    string     `json:"document_id"`
+	Summary       string     `json:"summary"`
+	SummaryTimeMS int64      `json:"summary_time_ms"`
+	SummaryStatus string     `json:"summary_status"`
+	ResolvedAt    *time.Time `json:"resolved_at,omitempty"` // RFC3339 UTC — momento real del evento
 }
 
 // discriminator resuelve el tipo de evento. El orquestador envía event_type
@@ -139,4 +143,50 @@ func (e *SummaryResolvedEvent) validate() error {
 	default:
 		return nil
 	}
+}
+
+// parseTimeTolerant intenta parsear una fecha RFC3339. Si falla, loguea
+// un warning y devuelve nil (no falla el mensaje).
+func parseTimeTolerant(field, value string) *time.Time {
+	if value == "" {
+		return nil
+	}
+	t, err := time.Parse(time.RFC3339, value)
+	if err != nil {
+		slog.Warn("failed to parse event timestamp", "field", field, "value", value, "error", err)
+		return nil
+	}
+	return &t
+}
+
+// UnmarshalJSON implementa parsing tolerante de extracted_at.
+func (e *OriginalEvent) UnmarshalJSON(data []byte) error {
+	type Alias OriginalEvent
+	aux := &struct {
+		ExtractedAt string `json:"extracted_at"`
+		*Alias
+	}{
+		Alias: (*Alias)(e),
+	}
+	if err := json.Unmarshal(data, aux); err != nil {
+		return err
+	}
+	e.ExtractedAt = parseTimeTolerant("extracted_at", aux.ExtractedAt)
+	return nil
+}
+
+// UnmarshalJSON implementa parsing tolerante de resolved_at.
+func (e *SummaryResolvedEvent) UnmarshalJSON(data []byte) error {
+	type Alias SummaryResolvedEvent
+	aux := &struct {
+		ResolvedAt string `json:"resolved_at"`
+		*Alias
+	}{
+		Alias: (*Alias)(e),
+	}
+	if err := json.Unmarshal(data, aux); err != nil {
+		return err
+	}
+	e.ResolvedAt = parseTimeTolerant("resolved_at", aux.ResolvedAt)
+	return nil
 }

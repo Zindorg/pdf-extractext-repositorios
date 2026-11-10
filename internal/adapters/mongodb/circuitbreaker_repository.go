@@ -2,6 +2,7 @@ package mongodb
 
 import (
 	"context"
+	"time"
 
 	"github.com/marco/pdf-extractext-repositorios/internal/domain"
 )
@@ -24,11 +25,11 @@ func (cbr *CircuitBreakerRepository) Insert(ctx context.Context, doc domain.Docu
 	})
 }
 
-func (cbr *CircuitBreakerRepository) Complete(ctx context.Context, documentID string, summary string, summaryTimeMS int64) (*domain.Document, error) {
+func (cbr *CircuitBreakerRepository) Complete(ctx context.Context, documentID string, summary string, summaryTimeMS int64, resolvedAt *time.Time) (*domain.Document, error) {
 	var result *domain.Document
 	err := cbr.cb.Execute(func() error {
 		var err error
-		result, err = cbr.repo.Complete(ctx, documentID, summary, summaryTimeMS)
+		result, err = cbr.repo.Complete(ctx, documentID, summary, summaryTimeMS, resolvedAt)
 		return err
 	})
 	return result, err

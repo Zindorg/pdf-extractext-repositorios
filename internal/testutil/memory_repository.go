@@ -4,6 +4,7 @@ import (
 	"context"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/marco/pdf-extractext-repositorios/internal/domain"
 )
@@ -38,7 +39,7 @@ func (r *MemoryRepository) Insert(_ context.Context, doc domain.Document) error 
 
 // Complete persiste el resumen y pasa el eje a RESOLVED (fake fiel del port):
 // inexistente → ErrNotFound (huérfano); soft-deleted → ErrNotFound; existente → RESOLVED + updated_at.
-func (r *MemoryRepository) Complete(_ context.Context, documentID string, summary string, summaryTimeMS int64) (*domain.Document, error) {
+func (r *MemoryRepository) Complete(_ context.Context, documentID string, summary string, summaryTimeMS int64, resolvedAt *time.Time) (*domain.Document, error) {
 	doc, ok := r.byID[documentID]
 	if !ok || doc.IsDeleted() {
 		return nil, domain.ErrNotFound
@@ -46,6 +47,7 @@ func (r *MemoryRepository) Complete(_ context.Context, documentID string, summar
 	doc.SummaryStatus = domain.SummaryResolved
 	doc.Summary = &summary
 	doc.SummaryTimeMS = summaryTimeMS
+	doc.ResolvedAt = resolvedAt
 	doc.UpdatedAt = domain.Now()
 	r.byID[documentID] = doc
 	return &doc, nil

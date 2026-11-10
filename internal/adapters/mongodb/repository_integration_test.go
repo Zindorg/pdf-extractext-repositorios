@@ -54,7 +54,8 @@ func TestRepository_Integration_Complete(t *testing.T) {
 	insertDoc(t, repo, integrationDoc("doc-1", "a.pdf", "PENDING", created))
 
 	summary := "resumen"
-	got, err := repo.Complete(context.Background(), "doc-1", summary, 120)
+	now := time.Now().UTC()
+	got, err := repo.Complete(context.Background(), "doc-1", summary, 120, &now)
 	require.NoError(t, err)
 	require.Equal(t, domain.SummaryResolved, got.SummaryStatus)
 	require.Equal(t, &summary, got.Summary)
@@ -71,7 +72,8 @@ func TestRepository_Integration_Complete(t *testing.T) {
 func TestRepository_Integration_Complete_NotFound(t *testing.T) {
 	repo := newIntegrationRepo(t)
 
-	_, err := repo.Complete(context.Background(), "missing", "resumen", 0)
+	now := time.Now().UTC()
+	_, err := repo.Complete(context.Background(), "missing", "resumen", 0, &now)
 
 	require.Equal(t, domain.ErrNotFound, err)
 }

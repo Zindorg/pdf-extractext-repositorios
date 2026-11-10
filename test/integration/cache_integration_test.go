@@ -121,7 +121,8 @@ func TestCacheIntegration_Complete_InvalidatesCache(t *testing.T) {
 
 	// Complete invalida cache
 	summary := "resumen"
-	got, err := repo.Complete(context.Background(), "cache-int-3", summary, 100)
+	now := time.Now().UTC()
+	got, err := repo.Complete(context.Background(), "cache-int-3", summary, 100, &now)
 	require.NoError(t, err)
 	require.Equal(t, domain.SummaryResolved, got.SummaryStatus)
 

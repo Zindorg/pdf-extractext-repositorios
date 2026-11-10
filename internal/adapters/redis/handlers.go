@@ -27,12 +27,18 @@ func (h *MessageHandlers) OnOriginal(ctx context.Context, ev *OriginalEvent) err
 	if err := verifyChecksum(ev.ExtractedText, ev.Checksum); err != nil {
 		return err
 	}
+	extractedAt := ev.ExtractedAt
+	if extractedAt == nil || extractedAt.IsZero() {
+		now := domain.Now()
+		extractedAt = &now
+	}
 	_, err := h.service.CreatePending(ctx, domain.Document{
 		DocumentID:       ev.DocumentID,
 		Checksum:         ev.Checksum,
 		SummaryStatus:    summaryStatusFrom(ev),
 		ExtractedText:    ev.ExtractedText,
 		ExtractionTimeMS: ev.ExtractionTimeMS,
+		ExtractedAt:      extractedAt,
 		Metadata: domain.Metadata{
 			Filename:  filenameOf(ev),
 			SizeBytes: ev.Metadata.SizeBytes,
@@ -85,7 +91,12 @@ func filenameOf(ev *OriginalEvent) string {
 // documento inexistente (huérfano) es un error real que irá a la DLQ tras
 // reintentos; una re-entrega sobre un documento ya completado es benigna.
 func (h *MessageHandlers) OnSummaryResolved(ctx context.Context, ev *SummaryResolvedEvent) error {
-	_, err := h.service.CompleteWithSummary(ctx, ev.DocumentID, ev.Summary, ev.SummaryTimeMS)
+	resolvedAt := ev.ResolvedAt
+	if resolvedAt == nil || resolvedAt.IsZero() {
+		now := domain.Now()
+		resolvedAt = &now
+	}
+	_, err := h.service.CompleteWithSummary(ctx, ev.DocumentID, ev.Summary, ev.SummaryTimeMS, resolvedAt)
 	return err
 }
 

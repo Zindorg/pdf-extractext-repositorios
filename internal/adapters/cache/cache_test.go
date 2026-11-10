@@ -109,7 +109,8 @@ func TestCachedRepository_Complete_InvalidatesCache(t *testing.T) {
 	require.NoError(t, redisClient.Set(context.Background(), "docchk:chk-5", `{"document_id":"doc-5","checksum":"chk-5","summary_status":"PENDING"}`, time.Hour).Err())
 
 	summary := "resumen"
-	result, err := cached.Complete(context.Background(), "doc-5", summary, 100)
+	now := time.Now().UTC()
+	result, err := cached.Complete(context.Background(), "doc-5", summary, 100, &now)
 	require.NoError(t, err)
 	require.Equal(t, domain.SummaryResolved, result.SummaryStatus)
 

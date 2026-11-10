@@ -2,6 +2,7 @@ package application
 
 import (
 	"context"
+	"time"
 
 	"github.com/marco/pdf-extractext-repositorios/internal/domain"
 )
@@ -40,7 +41,7 @@ func (s *DocumentService) CreatePending(ctx context.Context, doc domain.Document
 	return &doc, nil
 }
 
-func (s *DocumentService) CompleteWithSummary(ctx context.Context, documentID, summary string, summaryTimeMS int64) (*domain.Document, error) {
+func (s *DocumentService) CompleteWithSummary(ctx context.Context, documentID, summary string, summaryTimeMS int64, resolvedAt *time.Time) (*domain.Document, error) {
 	current, err := s.repo.FindByDocumentID(ctx, documentID)
 	if err != nil {
 		return nil, err
@@ -48,7 +49,7 @@ func (s *DocumentService) CompleteWithSummary(ctx context.Context, documentID, s
 	if current.HasSummary() {
 		return current, nil
 	}
-	return s.repo.Complete(ctx, documentID, summary, summaryTimeMS)
+	return s.repo.Complete(ctx, documentID, summary, summaryTimeMS, resolvedAt)
 }
 
 func (s *DocumentService) GetByDocumentID(ctx context.Context, documentID string) (*domain.Document, error) {

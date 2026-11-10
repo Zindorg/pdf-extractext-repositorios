@@ -3,6 +3,7 @@ package mongodb
 import (
 	"context"
 	"errors"
+	"time"
 
 	"github.com/marco/pdf-extractext-repositorios/internal/domain"
 	"go.mongodb.org/mongo-driver/v2/bson"
@@ -33,7 +34,7 @@ func (r *MongoDocumentRepository) Insert(ctx context.Context, doc domain.Documen
 	return nil
 }
 
-func (r *MongoDocumentRepository) Complete(ctx context.Context, documentID string, summary string, summaryTimeMS int64) (*domain.Document, error) {
+func (r *MongoDocumentRepository) Complete(ctx context.Context, documentID string, summary string, summaryTimeMS int64, resolvedAt *time.Time) (*domain.Document, error) {
 	filter := bson.M{
 		"document_id": documentID,
 		"deleted_at":  bson.M{"$exists": false},
@@ -42,6 +43,7 @@ func (r *MongoDocumentRepository) Complete(ctx context.Context, documentID strin
 		"summary_status":  string(domain.SummaryResolved),
 		"summary":         summary,
 		"summary_time_ms": summaryTimeMS,
+		"resolved_at":     resolvedAt,
 		"updated_at":      domain.Now(),
 	}}
 
