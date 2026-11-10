@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
 
 # Persistidor: Go estático + distroless (sin shell ni cliente HTTP) y sin root.
-ARG GO_VERSION=1.27
+ARG GO_VERSION=1.26
 
 # ---------- Build ----------
 FROM golang:${GO_VERSION}-alpine AS build
