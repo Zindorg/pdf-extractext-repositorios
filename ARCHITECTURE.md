@@ -1,9 +1,9 @@
 # Blueprint de Arquitectura — Microservicio de Persistencia de Documentos (MongoDB)
 
 > Documento rector del proyecto. Mantener actualizado junto con el código.
-> Última revisión: 2026-10-18. Alineado con `Especificaciones_v3.md` (hub & spoke, aislamiento de BD y zero-disk) + decisiones propias de este microservicio (dedup por checksum, ciclo de vida PENDING/COMPLETED).
+> Última revisión: 2026-11-10. Alineado con `Especificaciones_v3.md` (hub & spoke, aislamiento de BD y zero-disk) + decisiones propias de este microservicio (dedup por checksum, ciclo de vida PENDING/COMPLETED).
 >
-> **Estado de implementación**: operativos — conexiones Mongo/Redis, índices, `CreatePending`/`CompleteWithSummary`/`Get*`/`List`/descargas HTTP (service + API), soft-delete/restore (service + API), `/health`, el loop de consumo del stream (ACK/retry/DLQ) y el middleware de `X-Request-ID`. Sin endpoints en `501`. Swagger descartado para el MVP (ADR-008); test e2e vertical agregado en `test/e2e` (requiere compose). §10 es el contrato real por endpoint.
+> **Estado de implementación**: operativos — conexiones Mongo/Redis, índices, `CreatePending`/`CompleteWithSummary`/`Get*`/`List`/descargas HTTP (service + API), soft-delete/restore (service + API), `/health`, el loop de consumo del stream (ACK/retry/DLQ), middleware `X-Request-ID`, **Circuit Breaker + Rate Limit in-app (Bloque C, ADR-010)**, **Cache Redis read-through (Bloque D, ADR-011)**, **Saga forward-only documentada (Bloque E, ADR-012)**. Sin endpoints en `501`. Swagger descartado para el MVP (ADR-008); test e2e vertical agregado en `test/e2e` (requiere compose). §10 es el contrato real por endpoint.
 
 ## 1. Tipo de arquitectura
 
@@ -24,7 +24,7 @@ Patrón central de diseño: **Repository pattern** (puerto en dominio + adaptado
 |---|---|---|
 | Lenguaje | **Go 1.26+** | Binario estático, bajo consumo por request, alta concurrencia nativa |
 | HTTP | **Gin** | Binding, validación y rutas listas; el más usado para REST en Go |
-| BD | **MongoDB 8** | BD del ecosistema original; dedup garantizado por índice único parcial |
+| BD | **MongoDB 4.4** | BD del ecosistema original; dedup garantizado por índice único parcial |
 | Driver Mongo | `go.mongodb.org/mongo-driver/v2` | Driver oficial de MongoDB para Go |
 | Mensajería | **Redis Streams** (cliente `go-redis/v9`) | Ingesta asíncrona del texto original y del resumen por eventos; consumer groups y DLQ nativos |
 | Migraciones | — | No aplica: los índices los asegura la app al arrancar; el consumer group se crea también al arrancar (`ensureGroup`, mkstream) |
@@ -59,9 +59,9 @@ document-events-dlq                  solo red interna
        │
        │                           │  BSON (driver → documentos)
        ▼                          ▼
-                         [MongoDB 8 · db-net]
-                         colección `documents`
-                         data-per-service
+[MongoDB 4.4 · db-net]
+                          colección `documents`
+                          data-per-service
 ```
 
 **Flujo de este microservicio:**
@@ -391,12 +391,15 @@ Live en `docs/adr/`:
 - **ADR-007 — Reconocimiento del contrato de eventos del Orquestador (delta-persister)**: se adoptan los deltas 1–6 (`summary_resolved`, `extraction_time_ms`/`summary_time_ms`, `schema_version`, `event_type` con fallback a `event`, `summary_requested`/`summary_status`, `mime_type` top-level); se aplican 7–12 (el 7 —request-ID— con el middleware que propaga `X-Request-ID`; el 12 —`summary_pending` 409— en el Slice 7). Mensajes inválidos ⇒ retry → DLQ; sin idempotencia por `event_id`.
 - **ADR-008 — Swagger/OpenAPI**: descartado para el MVP; el contrato HTTP vive en §10. Reversible con un nuevo ADR si el ecosistema lo requiere.
 - **ADR-009 — Registro en Consul (catálogo + health check)**: registro estático del servicio `persister` con check HTTP contra `/api/v1/health`; no reemplaza DNS de Docker ni labels de Traefik; opt-in vía `make compose-consul`.
+- **ADR-010 — Circuit Breaker + Rate Limit in-app**: CB primitivo (closed/open/half-open) envuelve repo Mongo; RL token-bucket por IP en middleware Gin; ambos configurables por env (`CB_FAILURES`, `CB_TIMEOUT`, `RATE_LIMIT_RPS`, `RATE_LIMIT_BURST`).
+- **ADR-011 — Cache Redis read-through**: decorator `CachedRepository` (fail-open, TTL configurable, keys `doc:{id}`/`docchk:{checksum}`, invalidación en writes, List no cacheado).
+- **ADR-012 — Saga forward-only**: sin coreografía ni orquestación; idempotencia + dedup + retry/DLQ cubren el caso; recuperación manual vía DLQ.
 
 ---
 
 ## 13. Arquitectura de despliegue
 
-- `Dockerfile` multi-stage: `golang:1.26-alpine` (build) → `distroless` nonroot (binario ~10MB, sin shell).
+- `Dockerfile` multi-stage: `golang:1.26-alpine` (build, `ARG GO_VERSION=1.26`) → `distroless` nonroot (binario ~10MB, sin shell).
 - **Un `docker-compose` por componente de ESTE microservicio**: `docker-compose.mongo.yml`, `docker-compose.redis.yml`, `docker-compose.app.yml` y **opcional** `docker-compose.consul.yml`, encadenables con `make compose-up` (ordena mongo → redis → app) y `make compose-consul` (opt-in). **Traefik NO vive en estos composes**: pertenece al ecosistema y solo expone al Orquestador. La app crea los índices y el consumer group al arrancar; no hay servicio de migraciones.
 - Redes: `mired` (**externa**, compartida con el ecosistema: aquí viven app y redis) y `db-net` con `internal: true` (creada por el compose de mongo; la referencian mongo y app — la única con acceso a la BD).
 - **Endurecimiento**: los puertos se publican solo en `127.0.0.1` (nunca en la LAN), cada servicio corre con `no-new-privileges:true` y `restart: unless-stopped`, y Mongo/Redis declaran `healthcheck` (la app no puede: imagen distroless sin shell). Mongo corre **standalone** (sin replica set): el código no usa transacciones ni change streams.
@@ -406,7 +409,7 @@ Live en `docs/adr/`:
 # docker-compose.mongo.yml
 services:
   mongo:
-    image: mongo:8
+    image: mongo:4.4
     restart: unless-stopped
     environment:
       MONGO_INITDB_DATABASE: ${MONGODB_DATABASE:-text_extractor_db}
