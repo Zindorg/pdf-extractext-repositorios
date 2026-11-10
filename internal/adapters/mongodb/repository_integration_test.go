@@ -86,3 +86,29 @@ func TestRepository_Integration_DuplicateDocumentID(t *testing.T) {
 	err := repo.Insert(context.Background(), integrationDoc("doc-1", "otro.pdf", "PENDING", time.Now().UTC()))
 	require.Equal(t, domain.ErrDuplicateDocumentID, err)
 }
+
+// TestRepository_Integration_Restore_RaceDuplicateChecksum reproduce la
+// carrera TOCTOU entre restoreConflictCheck y clearDeletedAt
+func TestRepository_Integration_Restore_RaceDuplicateChecksum(t *testing.T) {
+	repo := newIntegrationRepo(t)
+	require.NoError(t, repo.EnsureIndexes(context.Background()))
+
+	ctx := context.Background()
+	chk := "chk-race-1"
+
+	// doc-1 activo con checksum X
+	doc1 := testutil.NewDoc("doc-1", "a.pdf", chk, domain.SummaryPending, time.Now().UTC().Truncate(time.Millisecond))
+	insertDoc(t, repo, doc1)
+
+	// SoftDelete: doc-1 sale del índice parcial (deleted_at seteado)
+	require.NoError(t, repo.SoftDelete(ctx, "doc-1"))
+
+	// doc-2 activo con el mismo checksum X (entra al índice parcial)
+	doc2 := testutil.NewDoc("doc-2", "b.pdf", chk, domain.SummaryPending, time.Now().UTC().Truncate(time.Millisecond))
+	insertDoc(t, repo, doc2)
+
+	// clearDeletedAt(doc-1) simula el interleave: check pasó antes de que doc-2 ocupara el checksum
+	// ahora el $unset deleted_at dispara 11000 en uq_checksum_active
+	err := repo.clearDeletedAt(ctx, "doc-1")
+	require.Equal(t, domain.ErrRestoreConflict, err)
+}
