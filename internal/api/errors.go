@@ -27,6 +27,7 @@ var errorMappings = []struct {
 	{domain.ErrDuplicateChecksum, http.StatusConflict, "checksum_conflict"},
 	{domain.ErrRestoreConflict, http.StatusConflict, "checksum_conflict"},
 	{domain.ErrSummaryPending, http.StatusConflict, "summary_pending"},
+	{domain.ErrRateLimited, http.StatusTooManyRequests, "rate_limited"},
 }
 
 func httpStatusFor(err error) int {
