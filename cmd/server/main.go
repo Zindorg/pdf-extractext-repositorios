@@ -367,3 +367,20 @@ func shutdown(server *http.Server) error {
 	slog.Info("server stopped gracefully")
 	return nil
 }
+// runHealthcheck: para el HEALTHCHECK de Docker (la imagen distroless no tiene wget/curl).
+func runHealthcheck() int {
+	port := os.Getenv("HTTP_PORT")
+	if port == "" {
+		port = "8083"
+	}
+	client := http.Client{Timeout: 2 * time.Second}
+	resp, err := client.Get("http://127.0.0.1:" + port + "/api/v1/health")
+	if err != nil {
+		return 1
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return 1
+	}
+	return 0
+}
