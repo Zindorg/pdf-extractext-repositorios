@@ -296,7 +296,10 @@ func serveHTTP(rootCtx context.Context, cfg *config.Config, inf *infra) error {
 	if err := startConsumer(rootCtx, cfg, inf, service); err != nil {
 		return err
 	}
-
+	if reg := consul.FromEnv(cfg.HTTPPort); reg.Enabled() {
+	go reg.Register(rootCtx)
+	defer reg.Deregister()
+}
 	server := newServer(cfg, service, inf)
 	slog.Info("servidor HTTP escuchando", "port", cfg.HTTPPort)
 	errCh := listenAndServe(server)
