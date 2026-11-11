@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	"github.com/marco/pdf-extractext-repositorios/internal/adapters/cache"
+	"github.com/marco/pdf-extractext-repositorios/internal/adapters/consul"
 	"github.com/marco/pdf-extractext-repositorios/internal/adapters/health"
 	"github.com/marco/pdf-extractext-repositorios/internal/adapters/mongodb"
 	redisadapter "github.com/marco/pdf-extractext-repositorios/internal/adapters/redis"
@@ -24,7 +26,6 @@ import (
 	"go.mongodb.org/mongo-driver/v2/mongo"
 	"go.mongodb.org/mongo-driver/v2/mongo/options"
 	"go.mongodb.org/mongo-driver/v2/mongo/readpref"
-	"log/slog"
 )
 
 const (
@@ -296,10 +297,13 @@ func serveHTTP(rootCtx context.Context, cfg *config.Config, inf *infra) error {
 	if err := startConsumer(rootCtx, cfg, inf, service); err != nil {
 		return err
 	}
+
+	// Auto-registro en el Consul del ecosistema (opcional: solo si CONSUL_HTTP_ADDR está definido).
 	if reg := consul.FromEnv(cfg.HTTPPort); reg.Enabled() {
-	go reg.Register(rootCtx)
-	defer reg.Deregister()
-}
+		go reg.Register(rootCtx)
+		defer reg.Deregister()
+	}
+
 	server := newServer(cfg, service, inf)
 	slog.Info("servidor HTTP escuchando", "port", cfg.HTTPPort)
 	errCh := listenAndServe(server)
@@ -373,6 +377,7 @@ func shutdown(server *http.Server) error {
 	slog.Info("server stopped gracefully")
 	return nil
 }
+
 // runHealthcheck: para el HEALTHCHECK de Docker (la imagen distroless no tiene wget/curl).
 func runHealthcheck() int {
 	port := os.Getenv("HTTP_PORT")

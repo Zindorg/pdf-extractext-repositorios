@@ -16,14 +16,21 @@ services:
       - CONSUL_HTTP_TOKEN=${CONSUL_HTTP_TOKEN:-}
       - SERVICE_ADDRESS=persister
     networks: [mired, db-net]
+    healthcheck:
+      test: ["CMD", "/persister", "healthcheck"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 15s
     labels:
       - traefik.enable=true
       - traefik.edge=internal
       - traefik.docker.network=mired
-      - traefik.http.routers.persister.rule=Host(persister.internal)
+      - traefik.http.routers.persister.rule=Host(`persister.internal`)
       - traefik.http.routers.persister.entrypoints=http
       - traefik.http.routers.persister.middlewares=int-ratelimit@file,int-cb@file
       - traefik.http.services.persister.loadbalancer.server.port=8083
+
 networks:
   mired:
     external: true
