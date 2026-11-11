@@ -3,7 +3,12 @@ services:
     image: hashicorp/consul:2.1.0
     container_name: persister-consul-client
     restart: unless-stopped
-    command: ["agent", "-config-dir=/consul/config"]
+    command: 
+      - agent
+      - -config-dir=/consul/config
+      - -hcl=acl { tokens { agent = "${CONSUL_TOKEN}" default = "${CONSUL_TOKEN}" } }
+    environment:
+      - CONSUL_HTTP_TOKEN=${CONSUL_TOKEN}
     volumes:
       - ./consul/config:/consul/config
       - consul_client_data:/consul/data
