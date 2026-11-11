@@ -153,6 +153,9 @@ func runRestoreByChecksum(cfg *config.Config, checksum string) error {
 }
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "healthcheck" {
+		os.Exit(runHealthcheck())
+	}
 	cfg, err := config.Load()
 	if err != nil {
 		slog.Error("config load failed", "error", err)

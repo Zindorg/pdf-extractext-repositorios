@@ -16,7 +16,7 @@ services:
       - mired
       - db-net
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:8083/api/v1/health || exit 1"]
+      test: ["CMD", "/persister", "healthcheck"]
       interval: 10s
       timeout: 3s
       retries: 3
