@@ -1,4 +1,4 @@
-.PHONY: build run test test-integration test-e2e vet lint compose-up compose-down logs compose-mongo compose-redis compose-app compose-consul
+.PHONY: build run test test-integration test-e2e vet vuln lint compose-up compose-down logs compose-mongo compose-redis compose-app compose-consul
 
 build:
 	go build -o bin/persister ./cmd/server
@@ -9,9 +9,15 @@ run:
 test:
 	go test ./...
 
-# Tests de integración: requieren MongoDB y Redis levantados y accesibles.
+# Tests de integración (Mongo y Redis reales, incluye test/integration y e2e).
+# FALLA si algún test se omite (t.Skip): sin Redis/Mongo arriba no hay verde.
 test-integration:
-	go test -tags=integration ./internal/adapters/mongodb/... ./internal/adapters/redis/...
+	@log=$$(mktemp); \
+	go test -tags=integration -count=1 -v ./... > $$log 2>&1; rc=$$?; \
+	grep -E -- '^(--- (FAIL|SKIP)|FAIL|ok )' $$log; \
+	if [ $$rc -ne 0 ]; then rm -f $$log; echo "ERROR: fallaron tests de integración"; exit 1; fi; \
+	if grep -q -- '--- SKIP' $$log; then rm -f $$log; echo "ERROR: hay tests de integración omitidos (¿Redis y Mongo arriba? make compose-mongo compose-redis)"; exit 1; fi; \
+	rm -f $$log
 
 # Test e2e vertical: requiere Mongo + Redis (compose). Ejercita XADD → API HTTP.
 test-e2e:
@@ -19,6 +25,11 @@ test-e2e:
 
 vet:
 	go vet ./...
+
+# Vulnerabilidades en dependencias (requiere: go install golang.org/x/vuln/cmd/govulncheck@latest)
+vuln:
+	@command -v govulncheck >/dev/null || { echo "falta govulncheck: go install golang.org/x/vuln/cmd/govulncheck@latest"; exit 1; }
+	govulncheck ./...
 
 # Formato + estática con la toolchain estándar (no requiere herramientas externas)
 lint:
