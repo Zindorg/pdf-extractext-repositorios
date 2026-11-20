@@ -87,7 +87,7 @@ func TestHandler_DownloadOriginal_OK(t *testing.T) {
 	require.Equal(t, http.StatusOK, rr.Code)
 	require.Equal(t, "texto extraido", rr.Body.String())
 	require.Contains(t, rr.Header().Get("Content-Type"), "text/plain")
-	expected := "attachment; filename*=UTF-8''" + url.PathEscape("mi archivo.pdf")
+	expected := "attachment; filename*=UTF-8''" + url.PathEscape("mi archivo.txt")
 	require.Equal(t, expected, rr.Header().Get("Content-Disposition"))
 }
 

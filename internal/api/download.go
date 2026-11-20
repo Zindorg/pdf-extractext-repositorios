@@ -3,6 +3,8 @@ package api
 import (
 	"net/http"
 	"net/url"
+	"path"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 	"github.com/marco/pdf-extractext-repositorios/internal/domain"
@@ -21,10 +23,12 @@ func contentDisposition(filename string) string {
 }
 
 func downloadFilename(doc domain.Document) string {
-	if doc.Metadata.Filename != "" {
-		return doc.Metadata.Filename
+	fallback := "document-" + doc.DocumentID + ".txt"
+	stem := strings.TrimSuffix(doc.Metadata.Filename, path.Ext(doc.Metadata.Filename))
+	if stem == "" {
+		return fallback
 	}
-	return "document-" + doc.DocumentID + ".txt"
+	return stem + ".txt"
 }
 
 // summaryError separa "todavía no está" (409) de "no existe ni va a existir" (404).
