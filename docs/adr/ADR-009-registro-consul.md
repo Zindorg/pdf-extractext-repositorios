@@ -61,3 +61,8 @@ No configurado hoy. Si se activa, se genera con `consul keygen` y se distribuye 
 
 ## Estado
 Aceptado. Implementado como compose opt-in (`make compose-consul`).
+
+## Actualización 2026-11-18 — estado real del código
+El código implementa **auto-registro por HTTP** (`internal/adapters/consul/registrar.go`, arrancado desde `cmd/server/main.go`): si `CONSUL_HTTP_ADDR` está definido, el servicio se registra al iniciar con ID `persister-<hostname>`, reintenta cada 5 s hasta lograrlo, usa `CONSUL_HTTP_TOKEN` (cabecera `X-Consul-Token`) y se desregistra al apagar. El check HTTP a `/api/v1/health` corre cada 10 s y Consul retira el servicio por sí solo tras 5 minutos en estado crítico (`DeregisterCriticalServiceAfter`), lo que mitiga el riesgo de "passing fantasma" descrito en la tabla de alternativas.
+
+El agente client de la **Decisión** sigue documentado como alternativa opt-in (`make compose-consul`), pero no es lo que corre por defecto. Pendiente de decidir: mantener ambos caminos o elegir uno y retirar el otro; verificar además que `docker-compose.consul.yml` y `consul/config/` existan en el repositorio.

@@ -22,7 +22,7 @@ Patrón central de diseño: **Repository pattern** (puerto en dominio + adaptado
 
 | Capa | Elección | Motivo |
 |---|---|---|
-| Lenguaje | **Go 1.26+** | Binario estático, bajo consumo por request, alta concurrencia nativa |
+| Lenguaje | **Go 1.27+** | Binario estático, bajo consumo por request, alta concurrencia nativa |
 | HTTP | **Gin** | Binding, validación y rutas listas; el más usado para REST en Go |
 | BD | **MongoDB 4.4** | BD del ecosistema original; dedup garantizado por índice único parcial |
 | Driver Mongo | `go.mongodb.org/mongo-driver/v2` | Driver oficial de MongoDB para Go |
@@ -141,7 +141,7 @@ metadata                               │
       └───────────────────┬──────────────────────┬─────────────┘
                           │  BSON                │  STREAM
               ┌───────────▼───────────┐   ┌───────▼──────────┐
-              │  MongoDB 8            │   │  Redis           │
+              │  MongoDB 4.4          │   │  Redis           │
               └───────────────────────┘   └──────────────────┘
 ```
 
@@ -386,24 +386,24 @@ Live en `docs/adr/`:
 - **ADR-002 — Checksum del productor + índice único parcial**: `checksum = SHA-256(extracted_text)` lo calcula el productor y viaja en el evento; la garantía fuerte de dedup vive en el índice único parcial de Mongo (`deleted_at: null`), no solo en la app.
 - **ADR-003 — document_id como clave de negocio**: UUID público distinto de `_id` interno; index único non-partial; soft-delete libera el checksum pero `document_id` nunca se reutiliza.
 - **ADR-004 — PENDING sin timeout + retry/DLQ**: un documento sin resumen queda guardado indefinidamente con su checksum ocupado; los mensajes fallidos usan `XAUTOCLAIM` con backoff y luego `document-events-dlq`.
-- **ADR-005 — Go + MongoDB + Redis**: Go 1.26 (binario estático), MongoDB 8 data-per-service aislado en `db-net`, Redis Streams como canal de ingesta del ecosistema.
-- **ADR-006 — Hub & Spoke con URL interna (no Traefik en este servicio)**: este microservicio NO se expone por Traefik; el Orquestador lo alcanza por nombre de servicio Docker (`http://persister:8083`), cumpliendo "URL, nunca IP" sin romper el aislamiento (spec §2.1/§7). Traefik solo enruta hacia el Orquestador (red pública).
+- **ADR-005 — Go + MongoDB + Redis**: Go 1.27 (binario estático), MongoDB 4.4 data-per-service aislado en `db-net`, Redis Streams como canal de ingesta del ecosistema.
+- **ADR-006 — Hub & Spoke con URL interna (no Traefik en este servicio)**: este microservicio NO es público: el Orquestador lo alcanza por nombre de servicio Docker (`http://persister:8083`). `docker-compose.app.yml` declara labels Traefik de borde interno (`traefik.edge=internal`, ``Host(`persister.internal`)``) cuyos middlewares `int-ratelimit@file` e `int-cb@file` no existen (phantom, ver ADR-010), cumpliendo "URL, nunca IP" sin romper el aislamiento (spec §2.1/§7). Traefik solo enruta hacia el Orquestador (red pública).
 - **ADR-007 — Reconocimiento del contrato de eventos del Orquestador (delta-persister)**: se adoptan los deltas 1–6 (`summary_resolved`, `extraction_time_ms`/`summary_time_ms`, `schema_version`, `event_type` con fallback a `event`, `summary_requested`/`summary_status`, `mime_type` top-level); se aplican 7–12 (el 7 —request-ID— con el middleware que propaga `X-Request-ID`; el 12 —`summary_pending` 409— en el Slice 7). Mensajes inválidos ⇒ retry → DLQ; sin idempotencia por `event_id`.
 - **ADR-008 — Swagger/OpenAPI**: descartado para el MVP; el contrato HTTP vive en §10. Reversible con un nuevo ADR si el ecosistema lo requiere.
 - **ADR-009 — Agente Consul client**: agente client que se une al servidor Consul del ecosistema (`servicios/consul`, dc `dc-converter`, nodo `ds`) vía `retry_join = ["consul"]` en `mired`; registra servicio `persister` con check HTTP `/api/v1/health` c/10s; opt-in vía `make compose-consul`. ACLs hoy `default_policy: allow`; preparado para token por servicio cuando pasen a `deny`.
-- **ADR-011 — Cache Redis read-through**: decorator `CachedRepository` (fail-open, TTL configurable, keys `doc:{id}`/`docchk:{checksum}`, invalidación en writes, List no cacheado).
+- **ADR-011 — Cache Redis read-through**: decorator `CachedRepository` (fail-open, TTL configurable, keys `doc:{id}`/`docchk:{checksum}`, llenado en miss con TTL, invalidación en `Complete`/`SoftDelete`/`Restore`, `Insert` y `List` no cacheados).
 - **ADR-012 — Saga forward-only**: sin coreografía ni orquestación; idempotencia + dedup + retry/DLQ cubren el caso; recuperación manual vía DLQ.
 
 ---
 
 ## 13. Arquitectura de despliegue
 
-- `Dockerfile` multi-stage: `golang:1.26-alpine` (build, `ARG GO_VERSION=1.26`) → `distroless` nonroot (binario ~10MB, sin shell).
-- **Un `docker-compose` por componente de ESTE microservicio**: `docker-compose.mongo.yml`, `docker-compose.redis.yml`, `docker-compose.app.yml` y **opcional** `docker-compose.consul.yml`, encadenables con `make compose-up` (ordena mongo → redis → app) y `make compose-consul` (opt-in). **Traefik NO vive en estos composes**: pertenece al ecosistema y solo expone al Orquestador. La app crea los índices y el consumer group al arrancar; no hay servicio de migraciones.
+- `Dockerfile` multi-stage: `golang:1.27.4-alpine` (build, `ARG GO_VERSION=1.27.4`) → `distroless` nonroot (binario ~10MB, sin shell).
+- **Un `docker-compose` por componente de ESTE microservicio**: `docker-compose.mongo.yml`, `docker-compose.redis.yml`, `docker-compose.app.yml` y **opcional** `docker-compose.consul.yml`, encadenables con `make compose-up` (ordena mongo → redis → app) y `make compose-consul` (opt-in). **Traefik NO vive en estos composes**: pertenece al ecosistema y solo expone al Orquestador (el compose de la app solo declara labels de borde interno; ver ADR-006). La app crea los índices y el consumer group al arrancar; no hay servicio de migraciones.
 - Redes: `mired` (**externa**, compartida con el ecosistema: aquí viven app y redis) y `db-net` con `internal: true` (creada por el compose de mongo; la referencian mongo y app — la única con acceso a la BD).
-- **Endurecimiento**: los puertos se publican solo en `127.0.0.1` (nunca en la LAN), cada servicio corre con `no-new-privileges:true` y `restart: unless-stopped`, y Mongo/Redis declaran `healthcheck` (la app no puede: imagen distroless sin shell). Mongo corre **standalone** (sin replica set): el código no usa transacciones ni change streams.
+- **Endurecimiento**: los puertos se publican solo en `127.0.0.1` (nunca en la LAN), cada servicio corre con `no-new-privileges:true` y `restart: unless-stopped`, y los tres declaran `healthcheck` (la app usa el subcomando `/persister healthcheck`, porque la imagen distroless no tiene shell ni `curl`). Mongo corre **standalone** (sin replica set): el código no usa transacciones ni change streams.
 - **Acceso del host a Mongo**: Docker **no publica puertos** de contenedores conectados solo a redes `internal`. Por eso Mongo va dual-homed: `db-net` (internal, ruta privada app↔mongo) **y** `db-dev` (no-internal, con `enable_ip_masquerade=false`), que habilita el puerto en `127.0.0.1` para dev/tests **sin salida a internet**. Sin esto, los tests de integración de Mongo se saltaban en silencio (`t.Skip`).
-- **Paridad dev/prod (12 Factor IX)**: la red `db-dev` (no-internal, puerto 27017 en loopback) solo existe para tests de integración locales. En prod, Mongo corre exclusivamente en `db-net` (internal=true) sin puertos publicados. El compose de app referencia `db-net` como `external: true`; `db-dev` es opcional y solo para desarrollo.
+- **Paridad dev/prod (12 Factor X)**: la red `db-dev` (no-internal, puerto 27017 en loopback) solo existe para tests de integración locales. En prod, Mongo corre exclusivamente en `db-net` (internal=true) sin puertos publicados. El compose de app referencia `db-net` como `external: true`; `db-dev` es opcional y solo para desarrollo (hoy `docker-compose.mongo.yml` la incluye siempre junto con el puerto; en prod hay que quitarlos).
 
 ```yaml
 # docker-compose.mongo.yml
@@ -469,7 +469,7 @@ services:
       mired:
         aliases: [ persister ]   # el Orquestador usa http://persister:8083
       db-net: { external: true } # creada por el compose de mongo
-    ports: [ "127.0.0.1:8083:8083" ]
+    # sin `ports`: el servicio solo es alcanzable por la red interna
     security_opt: [ no-new-privileges:true ]
     environment:
       MONGODB_URI: mongodb://mongo:27017/${MONGODB_DATABASE:-text_extractor_db}

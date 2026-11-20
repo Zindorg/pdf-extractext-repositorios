@@ -19,7 +19,7 @@ internal/testutil/   fixtures, seeders y helpers HTTP compartidos por los tests
 
 ## Requisitos
 
-- Go 1.26+
+- Go 1.27+
 - Docker (para Mongo/Redis) o instancias locales
 - Red Docker `mired` ya creada: `docker network create mired`
   (la red `db-net` la crea `docker-compose.mongo.yml` al levantar)
@@ -27,7 +27,7 @@ internal/testutil/   fixtures, seeders y helpers HTTP compartidos por los tests
 ## Correr localmente
 
 ```sh
-# dependencias: Mongo 4.4 + Redis 7
+# dependencias: Mongo 4.4 + Redis 8.10
 docker compose -f docker-compose.mongo.yml up -d
 docker compose -f docker-compose.redis.yml up -d
 
@@ -49,7 +49,7 @@ docker network create mired 2>/dev/null || true
 
 cp .env.example .env
 make compose-up        # mongo + redis + persister
-curl http://127.0.0.1:8083/api/v1/health   # {"status":"ok"}
+docker compose -f docker-compose.app.yml exec persister /persister healthcheck   # código de salida 0 = sano
 ```
 
 Composes individuales: `make compose-mongo`, `make compose-redis`, `make compose-app`. La app queda expuesta al ecosistema como `http://persister:8083` en la red `mired` (y opcionalmente `http://persister.internal` vía Traefik). Por seguridad, los puertos del host se publican solo en `127.0.0.1` (nunca en la LAN) y Mongo queda aislada en la red interna `db-net`.
@@ -74,11 +74,11 @@ docker exec persister-mongo mongo --quiet --eval 'db.getSiblingDB(process.env.MO
 
 Criterio de éxito: `/health` → `200 {"status":"ok"}`, existe el consumer group `documents-persister`, los 5 índices aparecen en Mongo.
 
-### Paridad Dev/Prod (12 Factor IX)
+### Paridad Dev/Prod (12 Factor X)
 
 | Aspecto | Dev (local) | Prod |
 |---|---|---|
-| MongoDB | `db-dev` network + puerto `127.0.0.1:27017` publicado | Solo `db-net` (internal), **sin** puerto publicado |
+| MongoDB | `db-dev` network + puerto `127.0.0.1:27017` publicado | Solo `db-net` (internal), **sin** puerto publicado (hoy `docker-compose.mongo.yml` incluye `db-dev` y el puerto siempre: en prod hay que quitarlos) |
 | Redis | `127.0.0.1:6379` publicado | Solo red `mired`, sin puerto host |
 | App | `docker compose up` con build local | Imagen pre-built `pdf-extractext-repositorios:vX.Y.Z` |
 | Logs | `docker logs -f` | Driver json-file con rotation (10MB/5 files) |
@@ -93,11 +93,11 @@ El Orquestador debe estar en la red `mired`. Desde un contenedor del Orquestador
 docker exec <orquestador-container> curl -i http://persister:8083/api/v1/health
 ```
 
-El servicio expone también labels Traefik (`Host(persister.internal)`) en la red `mired`. **Nota**: los middlewares `int-ratelimit@file` e `int-cb@file` referenciados en `docker-compose.app.yml:24` son **phantom** (no definidos en Traefik del ecosistema); la funcionalidad RL/CB existe in-app (ver ADR-010). El stream `document-events` debe publicarse con `XADD` usando `{"document_id": "...", "payload": "<json>"}` (el consumer lee el campo `payload`).
+El servicio expone también labels Traefik (`Host(persister.internal)`) en la red `mired`. **Nota**: los middlewares `int-ratelimit@file` e `int-cb@file` referenciados en `docker-compose.app.yml:31` son **phantom** (no definidos en Traefik del ecosistema); la funcionalidad RL/CB existe in-app (ver ADR-010). El stream `document-events` debe publicarse con `XADD` usando `{"document_id": "...", "payload": "<json>"}` (el consumer lee el campo `payload`).
 
 ## Descubrimiento de servicio (Consul)
 
-Opcional. Levanta un **agente Consul client** en la red `mired` que se une al servidor del ecosistema (`servicios/consul`, datacenter `dc-converter`, nodo `ds`) y registra `persister` con health check HTTP contra `/api/v1/health`.
+Si `CONSUL_HTTP_ADDR` está definido, el servicio se **auto-registra** al arrancar por HTTP API (`internal/adapters/consul/registrar.go`): reintenta cada 5 s hasta lograrlo, usa el ID `persister-<hostname>` y se desregistra al apagar. Alternativa opt-in (ADR-009): levantar un **agente Consul client** en la red `mired` que se une al servidor del ecosistema (`servicios/consul`, datacenter `dc-converter`, nodo `ds`) y registra `persister` con health check HTTP contra `/api/v1/health`.
 
 ```sh
 make compose-consul
@@ -105,7 +105,7 @@ curl -s http://127.0.0.1:8500/v1/health/service/persister   # Checks[].Status ==
 # UI: http://127.0.0.1:8500/ui
 ```
 
-**Qué NO hace:** no reemplaza el DNS de Docker (`http://persister:8083`). El agente replica el registro al servidor Consul central; el Orquestador y Traefik lo descubren ahí. El check cada 10 s golpea `/health` (ping real a Mongo+Redis); si la app está caída el servicio queda `critical` en el catálogo (no se desregistra).
+**Qué NO hace:** no reemplaza el DNS de Docker (`http://persister:8083`). El registro llega al servidor Consul central; el Orquestador y Traefik lo descubren ahí. El check cada 10 s golpea `/health` (ping real a Mongo+Redis); si la app está caída el servicio queda `critical` en el catálogo y Consul lo retira solo tras 5 minutos (`DeregisterCriticalServiceAfter`).
 
 ## Configuración
 

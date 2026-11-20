@@ -8,7 +8,7 @@ El checklist de resiliencia exige "Saga" como patrón. El `persister` recibe eve
 El flujo actual:
 1. `original` → `Insert` (pending, `summary_status=PENDING` o `NOT_REQUESTED`)
 2. `summary_resolved` → `Complete` (resuelto, idempotente por `HasSummary()`)
-3. Reintentos con backoff exponencial → DLQ tras `RETRY_MAX`
+3. Reintentos con backoff constante (`RETRY_BACKOFF`) → DLQ tras `RETRY_MAX`
 4. Deduplicación por `checksum` (índice único parcial `uq_checksum_active`)
 
 No hay transacción distribuida multi-servicio: el `persister` es un único participante que persiste y expone API de consulta. El Orquestador (fuera de este repo) decide cuándo pedir resumen y maneja timeouts/reintentos a su nivel.
