@@ -20,7 +20,10 @@ Opciones evaluadas:
 - Estados: `closed` → `open` (tras `failureThreshold` errores) → `half-open` (tras `timeout`) → `closed` (tras `successThreshold` éxitos)
 - Envuelve `domain.DocumentRepository` via `CircuitBreakerRepository` (decorator)
 - Defaults: `failureThreshold=5`, `successThreshold=2`, `timeout=30s` (configurables por env: `CB_FAILURES`, `CB_TIMEOUT`)
-- Fail-open en `Execute`: error = log + delega; éxito = reset contador
+- Fail-fast: con el circuito abierto `Execute` devuelve `ErrCircuitOpen` sin llamar a Mongo; un éxito resetea el contador de fallos
+- Los **errores de negocio** (`ErrNotFound`, duplicados, `ErrRestoreConflict`, `context.Canceled`) no cuentan como fallo: la base respondió bien
+- En half-open pasa **una sola** llamada de prueba a la vez; el resto recibe `ErrCircuitOpen`
+- Un panic dentro de la llamada protegida cuenta como fallo
 - `ErrCircuitOpen` mapeado a **500 genérico** (ver ADR-011 para cache; no se añade código 503 nuevo)
 
 ### Rate Limiter (`internal/api/middleware/ratelimit.go`)
@@ -39,7 +42,7 @@ Opciones evaluadas:
 ## Alternativas evaluadas
 | Alternativa | Por qué se descarta |
 |---|---|
-| Traefik `rateLimit`/`circuitBreaker` middlewares | Traefik no está en este compose; labels `int-ratelimit@file`/`int-cb@file` en `docker-compose.app.yml:24` son phantom (no definidos); mover Traefik aquí rompe aislamiento ecosistema. |
+| Traefik `rateLimit`/`circuitBreaker` middlewares | Traefik no está en este compose; labels `int-ratelimit@file`/`int-cb@file` en `docker-compose.app.yml:31` son phantom (no definidos); mover Traefik aquí rompe aislamiento ecosistema. |
 | `sony/gobreaker` / `juju/ratelimit` | Dependencias extra; APIs más complejas de lo necesario; primitivas propias < 100 líneas cubren el caso. |
 | Redis-based RL/CB (distribuido) | Overhead Redis + complejidad; instancias ya protegen Mongo localmente; RL por IP local suficiente para MVP. |
 

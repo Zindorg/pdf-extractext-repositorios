@@ -85,3 +85,5 @@ func (r *MongoDocumentRepository) FindByChecksum(ctx context.Context, checksum s
 func (r *MongoDocumentRepository) List(ctx context.Context, filter domain.ListFilter, page, pageSize int) ([]domain.Document, int64, error) {
 	return r.findPage(ctx, buildMongoFilter(filter), page, pageSize)
 }
+
+var _ domain.DocumentRepository = (*MongoDocumentRepository)(nil)
