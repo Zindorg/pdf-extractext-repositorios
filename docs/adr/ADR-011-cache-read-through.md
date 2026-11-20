@@ -17,8 +17,9 @@ Opciones:
 ### Detalles
 - **Keys**: `doc:{documentID}` y `docchk:{checksum}` (JSON del `Document` completo)
 - **Reads cacheados**: `FindByDocumentID`, `FindByChecksum`
+- **Llenado (read-through)**: ante un miss se lee del repo subyacente y se guarda el resultado con `SET key json EX ttl`; los errores (incluido `ErrNotFound`) no se cachean
 - **NO cacheado**: `List` (paginación + filtros dinámicos), `Insert`, `Complete`, `SoftDelete`, `Restore`
-- **Invalidación (DEL)**: `Complete`, `SoftDelete`, `Restore` → borran `doc:{id}` y `docchk:{checksum}`; `Insert` invalida `docchk:{checksum}` (no warm de `doc:{id}`)
+- **Invalidación (DEL)**: `Complete`, `SoftDelete`, `Restore` → borran `doc:{id}` y `docchk:{checksum}`; `Insert` no toca el cache (los misses y `ErrNotFound` no se cachean, así que no hay entrada que invalidar)
 - **TTL**: `CACHE_TTL` env var (default 60s, `0` = disabled pass-through)
 - **Fail-open**: error Redis → `slog.Warn` + delega al repo subyacente (Mongo protegido por CB)
 - **Ordering**: `CachedRepository(CircuitBreakerRepository(MongoRepo))` — cache outermost
@@ -29,12 +30,12 @@ Opciones:
 - `CACHE_TTL` (duration, default `60s`, `0` = disabled)
 
 ### Tests
-- Unitarios con miniredis (hit, miss, invalidación, TTL=0, fail-open)
+- Unitarios con miniredis (hit, miss con llenado y segunda lectura sin tocar el repo, `ErrNotFound` no cacheado, invalidación, TTL=0, fail-open)
 - Integración con Redis/Mongo reales (`SKIP_INTEGRATION`)
 
 ## Consecuencias
 - **Positivo**: descarga Mongo en lecturas repetidas; fail-open = resiliente a Redis caído; TTL acota ventana de staleness; transparente para service/handlers.
-- **Negativo**: staleness eventual (hasta TTL) tras `Complete`/`SoftDelete`/`Restore` antes de invalidar; `Insert` no calienta cache (primer GET = miss); memoria Redis ~tamaño docs cacheados.
+- **Negativo**: staleness eventual (hasta TTL) tras `Complete`/`SoftDelete`/`Restore` antes de invalidar (una lectura concurrente a una escritura puede repoblar brevemente el valor anterior, también acotado por el TTL); `Insert` no calienta cache (primer GET = miss); memoria Redis ~tamaño docs cacheados.
 - **Neutro**: no cambia API, contratos, ni dominio; `List` siempre fresco.
 
 ## Alternativas evaluadas
