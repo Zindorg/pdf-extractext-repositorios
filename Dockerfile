@@ -11,7 +11,7 @@ COPY go.mod go.sum ./
 RUN --mount=type=cache,target=/go/pkg/mod \
     go mod download && go mod verify
 
-# Requiere .dockerignore (.git, .env, tests) para no copiar basura ni secretos.
+# Requiere .dockerignore (.git, .env, composes) para no copiar basura ni secretos.
 COPY . .
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \

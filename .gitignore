@@ -1,40 +1,18 @@
-# Go
-/bin/
-/dist/
-*.exe
-*.test
-*.out
-coverage.out
-*.prof
-vendor/
-
-# Entornos y secretos
-.env
-.envrc
-*.env
-.env.local
-
-# Logs y temporales
-*.log
-*.pid
-*.rdb
-*.aof
-tmp/
-temp/
-
-# IDE / editor
-.idea/
-.vscode/
-*.swp
-.DS_Store
-
-# Especificaciones locales (no versionar)
-Especificaciones_v3.md
-
-MODULOS.md
-
-Project_Architecture_Blueprint.md
-
+# VCS y tooling del repo
+.git
+.gitignore
 .agents
+
+# Entorno y orquestación (el build solo necesita fuentes)
+.env
+.env.example
+docker-compose.*.yml
+Makefile
+
+# Documentación y meta (docs/ entra al contexto de build, pero el runtime solo recibe el binario)
+README.md
+ARCHITECTURE.md
+LICENSE
+AGENTS.md
 
 docs/proyect information of orquestador

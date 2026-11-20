@@ -3,6 +3,8 @@ services:
     image: pdf-extractext-repositorios:v${VERSIONREP:-1.0.1}
     build: ../pdf-extractext-repositorios
     restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
     environment:
       - TZ=${TZ:-America/Argentina/Mendoza}
       - HTTP_PORT=8083
