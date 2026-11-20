@@ -1,6 +1,8 @@
 package redis
 
 import (
+
+	"testing"
 	"context"
 	"errors"
 	"fmt"
@@ -11,7 +13,10 @@ import (
 	"github.com/marco/pdf-extractext-repositorios/internal/application"
 	"github.com/marco/pdf-extractext-repositorios/internal/domain"
 	"github.com/redis/go-redis/v9"
+	"github.com/marco/pdf-extractext-repositorios/internal/testutil"
+	"github.com/stretchr/testify/require"
 )
+
 
 var (
 	errNotConnected = errors.New("redis not connected")
@@ -23,6 +28,7 @@ const (
 	streamPayloadField = "payload"
 	consumeBatch       = 10
 	consumeBlock       = time.Second
+	reconnectWait      = 2 * time.Second
 )
 
 // Config agrupa los ajustes del consumer del stream.
@@ -39,14 +45,15 @@ type Config struct {
 // fallos quedan pending, se reclaman con XAUTOCLAIM tras el backoff y van a
 // la DLQ cuando se agotan los reintentos.
 type StreamConsumer struct {
-	client       *redis.Client
-	streamName   string
-	streamGroup  string
-	dlqName      string
-	consumerName string
-	maxTextBytes int64
-	handlers     *MessageHandlers
-	retry        *RetryDLQ
+	client        *redis.Client
+	streamName    string
+	streamGroup   string
+	dlqName       string
+	consumerName  string
+	maxTextBytes  int64
+	handlers      *MessageHandlers
+	retry         *RetryDLQ
+	reconnectWait time.Duration
 }
 
 func NewStreamConsumer(
@@ -59,36 +66,60 @@ func NewStreamConsumer(
 		return nil, errNotConnected
 	}
 	return &StreamConsumer{
-		client:       client,
-		streamName:   cfg.StreamName,
-		streamGroup:  cfg.StreamGroup,
-		dlqName:      cfg.DLQName,
-		consumerName: cfg.ConsumerName,
-		maxTextBytes: cfg.MaxTextBytes,
-		handlers:     NewMessageHandlers(service),
-		retry:        retry,
+		client:        client,
+		streamName:    cfg.StreamName,
+		streamGroup:   cfg.StreamGroup,
+		dlqName:       cfg.DLQName,
+		consumerName:  cfg.ConsumerName,
+		maxTextBytes:  cfg.MaxTextBytes,
+		handlers:      NewMessageHandlers(service),
+		retry:         retry,
+		reconnectWait: reconnectWait,
 	}, nil
 }
 
 // Run ejecuta el loop de consumo hasta que ctx se cancela (retorna nil).
+// Un error de infraestructura (por ejemplo Redis caído) no termina el loop:
+// se loguea y se reintenta tras reconnectWait, así la ingesta se reanuda sola
+// cuando Redis vuelve.
 func (c *StreamConsumer) Run(ctx context.Context) error {
-	if err := c.ensureGroup(ctx); err != nil {
-		if ctx.Err() != nil {
-			return nil
-		}
-		return fmt.Errorf("stream: %w", err)
+	c.waitForGroup(ctx)
+	if ctx.Err() != nil {
+		return nil
 	}
 
 	// Iniciar loop periódico de XTRIM MINID (cada minuto).
 	go c.trimLoop(ctx)
 
-	for {
-		if err := c.consume(ctx); err != nil {
-			if ctx.Err() != nil {
-				return nil
-			}
-			return err
+	for ctx.Err() == nil {
+		if err := c.consume(ctx); err != nil && ctx.Err() == nil {
+			slog.Error("stream consume failed, retrying", "error", err, "wait", c.reconnectWait)
+			sleepCtx(ctx, c.reconnectWait)
 		}
+	}
+	return nil
+}
+
+// waitForGroup crea el consumer group; si Redis no responde, reintenta hasta
+// lograrlo o hasta que ctx se cancele.
+func (c *StreamConsumer) waitForGroup(ctx context.Context) {
+	for ctx.Err() == nil {
+		err := c.ensureGroup(ctx)
+		if err == nil || ctx.Err() != nil {
+			return
+		}
+		slog.Error("stream group setup failed, retrying", "error", fmt.Errorf("stream: %w", err), "wait", c.reconnectWait)
+		sleepCtx(ctx, c.reconnectWait)
+	}
+}
+
+// sleepCtx espera d o hasta que ctx se cancele, lo que ocurra primero.
+func sleepCtx(ctx context.Context, d time.Duration) {
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+	case <-timer.C:
 	}
 }
 
@@ -246,4 +277,45 @@ func (c *StreamConsumer) trimStream(ctx context.Context) error {
 	}
 	slog.Debug("stream trimmed", "stream", c.streamName, "min_id", trimID)
 	return nil
+}
+
+// TestStreamConsumer_Run_SurvivesRedisErrors verifica que Run no termina
+// mientras Redis falla: sigue reintentando y solo retorna al cancelar ctx.
+func TestStreamConsumer_Run_SurvivesRedisErrors(t *testing.T) {
+	client := redis.NewClient(&redis.Options{
+		Addr:        "127.0.0.1:1", // puerto cerrado: toda operación falla
+		MaxRetries:  -1,
+		DialTimeout: 100 * time.Millisecond,
+	})
+	t.Cleanup(func() { _ = client.Close() })
+
+	service := application.NewDocumentService(testutil.NewMemoryRepository())
+	consumer, err := NewStreamConsumer(client, Config{
+		StreamName:   "s",
+		StreamGroup:  "g",
+		DLQName:      "d",
+		ConsumerName: "c",
+		MaxTextBytes: 1 << 20,
+	}, service, NewRetryDLQ(5, time.Second))
+	require.NoError(t, err)
+	consumer.reconnectWait = 10 * time.Millisecond
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- consumer.Run(ctx) }()
+
+	select {
+	case err := <-done:
+		t.Fatalf("Run no debe terminar mientras Redis falla (devolvió %v)", err)
+	case <-time.After(300 * time.Millisecond):
+	}
+
+	cancel()
+	select {
+	case err := <-done:
+		require.NoError(t, err)
+	case <-time.After(3 * time.Second):
+		t.Fatal("Run no retornó tras cancelar ctx")
+	}
 }
