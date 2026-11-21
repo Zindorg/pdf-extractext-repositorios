@@ -1,22 +1,20 @@
 package redis
 
 import (
-
-	"testing"
 	"context"
 	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
+	"testing"
 	"time"
 
 	"github.com/marco/pdf-extractext-repositorios/internal/application"
 	"github.com/marco/pdf-extractext-repositorios/internal/domain"
-	"github.com/redis/go-redis/v9"
 	"github.com/marco/pdf-extractext-repositorios/internal/testutil"
+	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/require"
 )
-
 
 var (
 	errNotConnected = errors.New("redis not connected")

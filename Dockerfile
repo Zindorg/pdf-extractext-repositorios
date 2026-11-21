@@ -13,10 +13,14 @@ RUN --mount=type=cache,target=/go/pkg/mod \
 
 # Requiere .dockerignore (.git, .env, composes) para no copiar basura ni secretos.
 COPY . .
+
+# Versión del release, embebida en el binario (12 Factor V). Se declara después de
+# descargar los módulos para no invalidar la caché de dependencias al cambiar de versión.
+ARG VERSION=dev
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
     CGO_ENABLED=0 GOOS=linux \
-    go build -mod=readonly -trimpath -buildvcs=false -ldflags="-s -w" -o /out/persister ./cmd/server
+    go build -mod=readonly -trimpath -buildvcs=false -ldflags="-s -w -X main.version=${VERSION}" -o /out/persister ./cmd/server
 
 # ---------- Runtime ----------
 FROM gcr.io/distroless/static-debian12:nonroot

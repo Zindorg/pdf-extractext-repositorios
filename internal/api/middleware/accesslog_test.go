@@ -1,4 +1,4 @@
-package middleware
+package middleware_test
 
 import (
 	"bytes"
@@ -8,94 +8,64 @@ import (
 	"testing"
 
 	"github.com/gin-gonic/gin"
+	"github.com/marco/pdf-extractext-repositorios/internal/api/middleware"
 	"github.com/stretchr/testify/require"
 )
 
-// newAccessLogRouter monta un router con el middleware AccessLog y el handler indicado.
-func newAccessLogRouter(t *testing.T, handler gin.HandlerFunc) *gin.Engine {
+// captureQuietLogs redirige slog a un buffer JSON con el nivel indicado y restaura el logger al terminar.
+func captureQuietLogs(t *testing.T, level slog.Level) *bytes.Buffer {
 	t.Helper()
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: level})))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+	return &buf
+}
+
+func newQuietRouter(healthStatus int) *gin.Engine {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
-	r.Use(RequestID())
-	r.Use(AccessLog())
-	r.GET("/", handler)
+	r.Use(middleware.AccessLog("/api/v1/health"))
+	r.GET("/api/v1/health", func(c *gin.Context) { c.Status(healthStatus) })
+	r.GET("/api/v1/documents", func(c *gin.Context) { c.Status(http.StatusOK) })
 	return r
 }
 
-func TestAccessLog_JSONOutput(t *testing.T) {
-	var buf bytes.Buffer
-	originalDefault := slog.Default()
-	defer slog.SetDefault(originalDefault)
+func TestAccessLogQuietPathHiddenAtInfo(t *testing.T) {
+	buf := captureQuietLogs(t, slog.LevelInfo)
+	r := newQuietRouter(http.StatusOK)
 
-	logger := slog.New(slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelInfo}))
-	slog.SetDefault(logger)
+	r.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/api/v1/health", nil))
 
-	r := newAccessLogRouter(t, func(c *gin.Context) {
-		c.Status(http.StatusOK)
-	})
-
-	w := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/?foo=bar", nil)
-	r.ServeHTTP(w, req)
-
-	require.Equal(t, http.StatusOK, w.Code)
-
-	// El log se escribe en el logger global (slog.Default)
-	// Como no capturamos el output directamente, verificamos que no panic
-	require.Equal(t, http.StatusOK, w.Code)
+	require.Empty(t, buf.String(), "el healthcheck exitoso no debe registrarse en nivel info")
 }
 
-func TestAccessLog_ContainsRequestID(t *testing.T) {
-	var buf bytes.Buffer
-	originalDefault := slog.Default()
-	defer slog.SetDefault(originalDefault)
+func TestAccessLogQuietPathVisibleAtDebug(t *testing.T) {
+	buf := captureQuietLogs(t, slog.LevelDebug)
+	r := newQuietRouter(http.StatusOK)
 
-	logger := slog.New(slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelInfo}))
-	slog.SetDefault(logger)
+	r.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/api/v1/health", nil))
 
-	r := newAccessLogRouter(t, func(c *gin.Context) {
-		c.Status(http.StatusOK)
-	})
-
-	w := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/", nil)
-	req.Header.Set("X-Request-ID", "test-req-123")
-	r.ServeHTTP(w, req)
-
-	require.Equal(t, http.StatusOK, w.Code)
-	// El log se escribe en slog.Default; no podemos capturarlo fácilmente sin inyectar el logger
-	// Este test verifica que no panic y el response es correcto
-	require.Equal(t, http.StatusOK, w.Code)
-	require.Equal(t, "test-req-123", w.Header().Get("X-Request-ID"))
+	require.Contains(t, buf.String(), `"level":"DEBUG"`)
+	require.Contains(t, buf.String(), `"path":"/api/v1/health"`)
 }
 
-func TestAccessLog_StatusCodes(t *testing.T) {
-	tests := []struct {
-		name       string
-		handler    gin.HandlerFunc
-		expectCode int
-	}{
-		{"200 OK", func(c *gin.Context) { c.Status(http.StatusOK) }, http.StatusOK},
-		{"404 Not Found", func(c *gin.Context) { c.Status(http.StatusNotFound) }, http.StatusNotFound},
-		{"500 Internal Server Error", func(c *gin.Context) { c.Status(http.StatusInternalServerError) }, http.StatusInternalServerError},
-	}
+func TestAccessLogQuietPathStillLogsFailures(t *testing.T) {
+	buf := captureQuietLogs(t, slog.LevelInfo)
+	r := newQuietRouter(http.StatusServiceUnavailable)
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			r := func() *gin.Engine {
-				gin.SetMode(gin.TestMode)
-				r := gin.New()
-				r.Use(RequestID())
-				r.Use(AccessLog())
-				r.GET("/", tt.handler)
-				return r
-			}()
+	r.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/api/v1/health", nil))
 
-			w := httptest.NewRecorder()
-			req := httptest.NewRequest(http.MethodGet, "/", nil)
-			r.ServeHTTP(w, req)
+	require.Contains(t, buf.String(), `"level":"ERROR"`)
+	require.Contains(t, buf.String(), `"status":503`)
+}
 
-			require.Equal(t, tt.expectCode, w.Code)
-		})
-	}
+func TestAccessLogRegularPathLogsAtInfo(t *testing.T) {
+	buf := captureQuietLogs(t, slog.LevelInfo)
+	r := newQuietRouter(http.StatusOK)
+
+	r.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/api/v1/documents", nil))
+
+	require.Contains(t, buf.String(), `"level":"INFO"`)
+	require.Contains(t, buf.String(), `"path":"/api/v1/documents"`)
 }

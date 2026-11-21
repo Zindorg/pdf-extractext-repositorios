@@ -5,16 +5,15 @@ import (
 	"github.com/marco/pdf-extractext-repositorios/internal/api/middleware"
 )
 
-// NewRouter construye el router Gin con middleware y el grupo /api/v1.
-// No hay POST /documents: la creación llega solo por stream.
 func NewRouter(handler *DocumentHandler, rateLimitRPS, rateLimitBurst int) *gin.Engine {
 	r := gin.New()
 	r.Use(middleware.RequestID())
-	r.Use(middleware.AccessLog())
+	r.Use(middleware.AccessLog("/api/v1/health")) // healthchecks exitosos en nivel debug
 	if rateLimitRPS > 0 && rateLimitBurst > 0 {
 		r.Use(middleware.RateLimit(rateLimitRPS, rateLimitBurst))
 	}
-	r.Use(gin.Recovery())
+
+	r.Use(middleware.Recovery())
 
 	v1 := r.Group("/api/v1")
 	{

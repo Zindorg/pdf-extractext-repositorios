@@ -1,22 +1,48 @@
 services:
   persister:
-    image: pdf-extractext-repositorios:v${VERSIONREP:-1.0.1}
-    build: ../pdf-extractext-repositorios
+    image: ${REGISTRY:-}pdf-extractext-repositorios:v${VERSIONREP:?definir VERSIONREP}
+    build:
+      context: ../pdf-extractext-repositorios
+      args:
+        VERSION: ${VERSIONREP}
     restart: unless-stopped
+    stop_grace_period: ${STOP_GRACE_PERIOD:-30s}
     security_opt:
       - no-new-privileges:true
+    read_only: true
+    deploy:
+      replicas: ${PERSISTER_REPLICAS:-1}
+    logging:
+      driver: json-file
+      options:
+        max-size: ${LOG_MAX_SIZE:-10m}
+        max-file: ${LOG_MAX_FILE:-3}
     environment:
       - TZ=${TZ:-America/Argentina/Mendoza}
-      - HTTP_PORT=8083
-      - MONGODB_URI=mongodb://mongo:27017/${MONGODB_DATABASE:-text_extractor_db}
+      - HTTP_PORT=${HTTP_PORT:-8083}
       - MONGODB_DATABASE=${MONGODB_DATABASE:-text_extractor_db}
-      - REDIS_ADDR=redis:6379
+      - MONGODB_URI=${MONGODB_URI:-mongodb://mongo:27017/${MONGODB_DATABASE:-text_extractor_db}}
+      - REDIS_ADDR=${REDIS_ADDR:-redis:6379}
+      - REDIS_USERNAME=${REDIS_USERNAME:-}
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
+      - REDIS_TLS=${REDIS_TLS:-false}
       - STREAM_NAME=${STREAM_NAME:-document-events}
       - STREAM_GROUP=${STREAM_GROUP:-documents-persister}
       - DLQ_NAME=${DLQ_NAME:-document-events-dlq}
+      - RETRY_MAX=${RETRY_MAX:-5}
+      - RETRY_BACKOFF=${RETRY_BACKOFF:-5s}
+      - MAX_TEXT_BYTES=${MAX_TEXT_BYTES:-15728640}
+      - RATE_LIMIT_RPS=${RATE_LIMIT_RPS:-100}
+      - RATE_LIMIT_BURST=${RATE_LIMIT_BURST:-200}
+      - CB_FAILURES=${CB_FAILURES:-5}
+      - CB_TIMEOUT=${CB_TIMEOUT:-30s}
+      - CACHE_TTL=${CACHE_TTL:-60s}
+      - LOG_LEVEL=${LOG_LEVEL:-info}
+      - GIN_MODE=${GIN_MODE:-release}
+      - CONFIG_STRICT=${CONFIG_STRICT:-false}
       - CONSUL_HTTP_ADDR=${CONSUL_HTTP_ADDR-http://consul:8500}
       - CONSUL_HTTP_TOKEN=${CONSUL_HTTP_TOKEN:-}
-      - SERVICE_ADDRESS=persister
+      - SERVICE_ADDRESS=${SERVICE_ADDRESS:-persister}
     networks: [mired, db-net]
     healthcheck:
       test: ["CMD", "/persister", "healthcheck"]
@@ -28,10 +54,10 @@ services:
       - traefik.enable=true
       - traefik.edge=internal
       - traefik.docker.network=mired
-      - traefik.http.routers.persister.rule=Host(`persister.internal`)
+      - traefik.http.routers.persister.rule=Host(`${PERSISTER_HOST:-persister.internal}`)
       - traefik.http.routers.persister.entrypoints=http
       - traefik.http.routers.persister.middlewares=int-ratelimit@file,int-cb@file
-      - traefik.http.services.persister.loadbalancer.server.port=8083
+      - traefik.http.services.persister.loadbalancer.server.port=${HTTP_PORT:-8083}
 
 networks:
   mired:

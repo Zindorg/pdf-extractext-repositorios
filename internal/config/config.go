@@ -36,19 +36,23 @@ type Config struct {
 	RedisAddr       string
 	RedisUsername   string
 	RedisPassword   string
-	StreamName      string
-	StreamGroup     string
-	DLQName         string
-	ConsumerName    string
-	RetryMax        int
-	RetryBackoff    time.Duration
-	MaxTextBytes    int64
-	LogLevel        string
-	RateLimitRPS    int
-	RateLimitBurst  int
-	CBFailures      int
-	CBTimeout       time.Duration
-	CacheTTL        time.Duration
+	// RedisTLS: si es true, la conexión a Redis usa TLS (Redis gestionado/remoto).
+	RedisTLS       bool
+	StreamName     string
+	StreamGroup    string
+	DLQName        string
+	ConsumerName   string
+	RetryMax       int
+	RetryBackoff   time.Duration
+	MaxTextBytes   int64
+	LogLevel       string
+	RateLimitRPS   int
+	RateLimitBurst int
+	CBFailures     int
+	CBTimeout      time.Duration
+	CacheTTL       time.Duration
+	// Strict: si es true, MONGODB_URI y REDIS_ADDR son obligatorias (sin default).
+	Strict bool
 }
 
 // LogLevelParsed returns the parsed slog.Level from LogLevel.
@@ -57,7 +61,27 @@ func (c *Config) LogLevelParsed() slog.Level {
 }
 
 func Load() (*Config, error) {
+	strict, err := envBool("CONFIG_STRICT", false)
+	if err != nil {
+		return nil, fmt.Errorf("CONFIG_STRICT: %w", err)
+	}
+
+	if strict {
+		for _, key := range []string{"MONGODB_URI", "REDIS_ADDR"} {
+			if v, ok := os.LookupEnv(key); !ok || v == "" {
+				return nil, fmt.Errorf("%s: variable obligatoria (CONFIG_STRICT=true)", key)
+			}
+		}
+	}
+
+	redisTLS, err := envBool("REDIS_TLS", false)
+	if err != nil {
+		return nil, fmt.Errorf("REDIS_TLS: %w", err)
+	}
+
 	cfg := stringConfig()
+	cfg.Strict = strict
+	cfg.RedisTLS = redisTLS
 	if err := loadNumbers(cfg); err != nil {
 		return nil, err
 	}
@@ -127,6 +151,19 @@ func env(key, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+// envBool lee una env var booleana; ausente o vacía → fallback.
+func envBool(key string, fallback bool) (bool, error) {
+	v, ok := os.LookupEnv(key)
+	if !ok || v == "" {
+		return fallback, nil
+	}
+	b, err := strconv.ParseBool(v)
+	if err != nil {
+		return false, fmt.Errorf("invalid boolean %q: %w", v, err)
+	}
+	return b, nil
 }
 
 // envParse lee una env var y la convierte con parse; ausente o vacía → fallback.

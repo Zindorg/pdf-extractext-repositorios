@@ -7,9 +7,12 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// AccessLog devuelve un middleware que registra cada petición en JSON
-// con slog, incluyendo request_id, método, path, status, latencia, etc.
-func AccessLog() gin.HandlerFunc {
+func AccessLog(quietPaths ...string) gin.HandlerFunc {
+	quiet := make(map[string]struct{}, len(quietPaths))
+	for _, p := range quietPaths {
+		quiet[p] = struct{}{}
+	}
+
 	return func(c *gin.Context) {
 		start := time.Now()
 		path := c.Request.URL.Path
@@ -32,17 +35,22 @@ func AccessLog() gin.HandlerFunc {
 			slog.Duration("latency", latency),
 		}
 
-		if requestID != nil {
-			attrs = append(attrs, slog.String("request_id", requestID.(string)))
+		if id, ok := requestID.(string); ok && id != "" {
+			attrs = append(attrs, slog.String("request_id", id))
 		}
 
-		// Log level based on status code
-		if status >= 500 {
+		// Nivel según el status; las rutas de sondeo exitosas bajan a debug.
+		switch {
+		case status >= 500:
 			slog.Error("HTTP request completed", attrs...)
-		} else if status >= 400 {
+		case status >= 400:
 			slog.Warn("HTTP request completed", attrs...)
-		} else {
-			slog.Info("HTTP request completed", attrs...)
+		default:
+			if _, isQuiet := quiet[path]; isQuiet {
+				slog.Debug("HTTP request completed", attrs...)
+			} else {
+				slog.Info("HTTP request completed", attrs...)
+			}
 		}
 	}
 }

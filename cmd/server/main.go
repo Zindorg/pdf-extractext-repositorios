@@ -2,12 +2,15 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -28,14 +31,32 @@ import (
 	"go.mongodb.org/mongo-driver/v2/mongo/readpref"
 )
 
+// version se inyecta en el build con -ldflags "-X main.version=<release>" (12 Factor V).
+var version = "dev"
+
 const (
-	startupTimeout    = 10 * time.Second  // ping e índices al arrancar
-	readHeaderTimeout = 5 * time.Second   // hardening: límite de lectura de headers
-	readTimeout       = 10 * time.Second  // hardening: límite de lectura del body
-	writeTimeout      = 30 * time.Second  // hardening: límite de escritura de respuesta
-	idleTimeout       = 120 * time.Second // hardening: límite de conexiones idle
-	shutdownTimeout   = 10 * time.Second  // graceful shutdown
+	startupTimeout      = 10 * time.Second  // ping e índices al arrancar
+	readHeaderTimeout   = 5 * time.Second   // hardening: límite de lectura de headers
+	readTimeout         = 10 * time.Second  // hardening: límite de lectura del body
+	writeTimeout        = 30 * time.Second  // hardening: límite de escritura de respuesta
+	idleTimeout         = 120 * time.Second // hardening: límite de conexiones idle
+	shutdownTimeout     = 10 * time.Second  // graceful shutdown HTTP
+	consumerStopTimeout = 10 * time.Second  // espera al consumer al apagar (mensaje en curso)
 )
+
+// newRedisClient construye el cliente Redis a partir de la configuración
+// Es el único punto de construcción: lo usan el servidor y los subcomandos admin.
+func newRedisClient(cfg *config.Config) *redis.Client {
+	opts := &redis.Options{
+		Addr:     cfg.RedisAddr,
+		Username: cfg.RedisUsername,
+		Password: cfg.RedisPassword,
+	}
+	if cfg.RedisTLS {
+		opts.TLSConfig = &tls.Config{MinVersion: tls.VersionTLS12}
+	}
+	return redis.NewClient(opts)
+}
 
 // CLI subcommands para admin processes (12 Factor XII)
 func runMigrate(cfg *config.Config) error {
@@ -51,6 +72,8 @@ func runMigrate(cfg *config.Config) error {
 	return repo.EnsureIndexes(ctx)
 }
 
+// runReindex borra y recrea los índices usando la misma definición que EnsureIndexes.
+// Ejecutar con el consumer detenido (ver Makefile: admin-reindex).
 func runReindex(cfg *config.Config) error {
 	ctx := context.Background()
 	client, err := mongo.Connect(options.Client().ApplyURI(cfg.MongoDBURI))
@@ -59,67 +82,102 @@ func runReindex(cfg *config.Config) error {
 	}
 	defer client.Disconnect(ctx)
 
-	db := client.Database(cfg.MongoDBDatabase)
-	// Drop indexes
-	indexes := []string{"uq_document_id", "uq_checksum_active", "ix_filename", "ix_created_at", "ix_summary_status"}
-	for _, name := range indexes {
-		_ = db.Collection("documents").Indexes().DropOne(ctx, name)
-	}
-	// Recreate
-	repo := mongodb.NewMongoDocumentRepository(db)
-	return repo.EnsureIndexes(ctx)
+	repo := mongodb.NewMongoDocumentRepository(client.Database(cfg.MongoDBDatabase))
+	return repo.Reindex(ctx)
 }
 
+// dlqPageSize: mensajes que se leen por página de la DLQ (no se carga entera en memoria).
+const dlqPageSize = 100
+
+// runCleanupDLQ lista la DLQ; con requeue=true devuelve cada mensaje al stream principal y
+// lo borra de la DLQ. Pagina con XRANGE COUNT y un cursor por ID.
 func runCleanupDLQ(cfg *config.Config, requeue bool) error {
 	ctx := context.Background()
-	opts := &redis.Options{
-		Addr:     cfg.RedisAddr,
-		Username: cfg.RedisUsername,
-		Password: cfg.RedisPassword,
-	}
-	client := redis.NewClient(opts)
+	client := newRedisClient(cfg)
 	defer client.Close()
 
 	if err := client.Ping(ctx).Err(); err != nil {
 		return fmt.Errorf("redis ping: %w", err)
 	}
 
+	// Los nombres vienen siempre de config (config.Load garantiza defaults).
 	dlq := cfg.DLQName
-	if dlq == "" {
-		dlq = "document-events-dlq"
-	}
+	stream := cfg.StreamName
 
-	// Listar mensajes
-	msgs, err := client.XRange(ctx, dlq, "-", "+").Result()
-	if err != nil {
-		return fmt.Errorf("xrange dlq: %w", err)
-	}
-
-	fmt.Printf("DLQ %s: %d mensajes\n", dlq, len(msgs))
-	for _, m := range msgs {
-		fmt.Printf("  ID: %s, document_id: %s\n", m.ID, m.Values["document_id"])
-	}
-
-	if requeue && len(msgs) > 0 {
-		stream := cfg.StreamName
-		if stream == "" {
-			stream = "document-events"
+	var total, requeued, skipped int
+	start := "-"
+	for {
+		msgs, err := client.XRangeN(ctx, dlq, start, "+", dlqPageSize).Result()
+		if err != nil {
+			return fmt.Errorf("xrange dlq: %w", err)
 		}
+		if len(msgs) == 0 {
+			break
+		}
+
 		for _, m := range msgs {
-			payload := m.Values["payload"]
-			docID := m.Values["document_id"]
-			err := client.XAdd(ctx, &redis.XAddArgs{
-				Stream: stream,
-				Values: map[string]any{"document_id": docID, "payload": payload},
-			}).Err()
-			if err != nil {
-				return fmt.Errorf("requeue %s: %w", docID, err)
+			total++
+			fmt.Printf("  ID: %s, document_id: %v\n", m.ID, m.Values["document_id"])
+			if !requeue {
+				continue
 			}
-			_ = client.XDel(ctx, dlq, m.ID).Err()
+			ok, err := requeueDLQMessage(ctx, client, dlq, stream, m)
+			if err != nil {
+				return fmt.Errorf("%w (re-encolados antes del fallo: %d)", err, requeued)
+			}
+			if ok {
+				requeued++
+			} else {
+				skipped++
+			}
 		}
-		fmt.Printf("Re-encolados %d mensajes a %s\n", len(msgs), stream)
+
+		next, err := nextStreamID(msgs[len(msgs)-1].ID)
+		if err != nil {
+			return err
+		}
+		start = next
+	}
+
+	fmt.Printf("DLQ %s: %d mensajes\n", dlq, total)
+	if requeue {
+		fmt.Printf("Re-encolados %d mensajes a %s (omitidos sin document_id/payload: %d)\n", requeued, stream, skipped)
 	}
 	return nil
+}
+
+// requeueDLQMessage devuelve un mensaje de la DLQ al stream principal y lo borra de la DLQ.
+func requeueDLQMessage(ctx context.Context, client *redis.Client, dlq, stream string, m redis.XMessage) (bool, error) {
+	docID, hasID := m.Values["document_id"]
+	payload, hasPayload := m.Values["payload"]
+	if !hasID || !hasPayload {
+		return false, nil
+	}
+	err := client.XAdd(ctx, &redis.XAddArgs{
+		Stream: stream,
+		Values: map[string]any{"document_id": docID, "payload": payload},
+	}).Err()
+	if err != nil {
+		return false, fmt.Errorf("requeue %v: %w", docID, err)
+	}
+	if err := client.XDel(ctx, dlq, m.ID).Err(); err != nil {
+		return false, fmt.Errorf("xdel dlq %s (el mensaje YA fue reencolado a %s): %w", m.ID, stream, err)
+	}
+	return true, nil
+}
+
+// nextStreamID devuelve el ID inmediatamente posterior a id (ms-seq → ms-(seq+1)), para paginar
+// XRANGE sin depender del rango exclusivo "(" (Redis >= 6.2).
+func nextStreamID(id string) (string, error) {
+	ms, seqStr, found := strings.Cut(id, "-")
+	if !found {
+		return "", fmt.Errorf("ID de stream inválido: %q", id)
+	}
+	seq, err := strconv.ParseUint(seqStr, 10, 64)
+	if err != nil {
+		return "", fmt.Errorf("ID de stream inválido %q: %w", id, err)
+	}
+	return ms + "-" + strconv.FormatUint(seq+1, 10), nil
 }
 
 func runRestoreByChecksum(cfg *config.Config, checksum string) error {
@@ -140,9 +198,11 @@ func runRestoreByChecksum(cfg *config.Config, checksum string) error {
 	var pd struct {
 		DocumentID string `bson:"document_id"`
 	}
-	err = db.Collection("documents").FindOne(ctx, filter).Decode(&pd)
+	// Si hubiera varios borrados con el mismo checksum, se restaura el más reciente.
+	findOpts := options.FindOne().SetSort(bson.D{{Key: "deleted_at", Value: -1}})
+	err = db.Collection("documents").FindOne(ctx, filter, findOpts).Decode(&pd)
 	if err != nil {
-		if err == mongo.ErrNoDocuments {
+		if errors.Is(err, mongo.ErrNoDocuments) {
 			return fmt.Errorf("no hay documento soft-deleted con checksum %s", checksum)
 		}
 		return fmt.Errorf("find: %w", err)
@@ -157,15 +217,20 @@ func main() {
 	if len(os.Args) > 1 && os.Args[1] == "healthcheck" {
 		os.Exit(runHealthcheck())
 	}
+
+	// JSON desde el primer log, incluso si config.Load falla (nivel provisorio: info).
+	logging.Setup(logging.DefaultLevel)
+
 	cfg, err := config.Load()
 	if err != nil {
 		slog.Error("config load failed", "error", err)
 		os.Exit(1)
 	}
 
-	// Setup structured logging
-	logging.Setup(cfg.LogLevelParsed())
-	slog.Info("starting persister", "version", "dev")
+	// Nivel definitivo según LOG_LEVEL; service e instance identifican cada réplica en los logs.
+	logger := logging.Setup(cfg.LogLevelParsed())
+	slog.SetDefault(logger.With("service", "persister", "instance", cfg.ConsumerName))
+	slog.Info("starting persister", "version", version)
 
 	// Subcomandos admin (12 Factor XII)
 	if len(os.Args) > 1 {
@@ -275,12 +340,7 @@ func startMongo(ctx context.Context, uri, dbName string, cfg *config.Config, red
 
 // startRedis conecta el cliente y verifica que el servidor responda.
 func startRedis(ctx context.Context, cfg *config.Config) (*redis.Client, error) {
-	opts := &redis.Options{
-		Addr:     cfg.RedisAddr,
-		Username: cfg.RedisUsername,
-		Password: cfg.RedisPassword,
-	}
-	client := redis.NewClient(opts)
+	client := newRedisClient(cfg)
 	pingCtx, cancel := context.WithTimeout(ctx, startupTimeout)
 	defer cancel()
 	if err := client.Ping(pingCtx).Err(); err != nil {
@@ -290,11 +350,10 @@ func startRedis(ctx context.Context, cfg *config.Config) (*redis.Client, error) 
 	return client, nil
 }
 
-// serveHTTP monta la API, arranca el servidor y bloquea hasta la señal de
-// apagado o un error fatal del listener.
 func serveHTTP(rootCtx context.Context, cfg *config.Config, inf *infra) error {
 	service := application.NewDocumentService(inf.repo)
-	if err := startConsumer(rootCtx, cfg, inf, service); err != nil {
+	consumerDone, err := startConsumer(rootCtx, cfg, inf, service)
+	if err != nil {
 		return err
 	}
 
@@ -314,13 +373,19 @@ func serveHTTP(rootCtx context.Context, cfg *config.Config, inf *infra) error {
 	case <-rootCtx.Done():
 		slog.Info("apagando…")
 	}
-	return shutdown(server)
+
+	shutdownErr := shutdown(server)
+
+	// Esperar al consumer: termina el mensaje en curso antes de cerrar Mongo y Redis.
+	select {
+	case <-consumerDone:
+	case <-time.After(consumerStopTimeout):
+		slog.Warn("el consumer no terminó a tiempo; el mensaje en curso quedará pending y se reclamará")
+	}
+	return shutdownErr
 }
 
-// startConsumer arranca el consumer del stream en background. Un fallo al
-// crear el consumer group es fatal en el arranque; los fallos del loop los
-// gestiona el propio consumer (retry → DLQ).
-func startConsumer(ctx context.Context, cfg *config.Config, inf *infra, service *application.DocumentService) error {
+func startConsumer(ctx context.Context, cfg *config.Config, inf *infra, service *application.DocumentService) (<-chan struct{}, error) {
 	retry := redisadapter.NewRetryDLQ(cfg.RetryMax, cfg.RetryBackoff)
 	consumerCfg := redisadapter.Config{
 		StreamName:   cfg.StreamName,
@@ -331,14 +396,16 @@ func startConsumer(ctx context.Context, cfg *config.Config, inf *infra, service 
 	}
 	consumer, err := redisadapter.NewStreamConsumer(inf.redis, consumerCfg, service, retry)
 	if err != nil {
-		return fmt.Errorf("redis consumer: %w", err)
+		return nil, fmt.Errorf("redis consumer: %w", err)
 	}
+	done := make(chan struct{})
 	go func() {
+		defer close(done)
 		if err := consumer.Run(ctx); err != nil {
 			slog.Error("stream consumer stopped", "error", err)
 		}
 	}()
-	return nil
+	return done, nil
 }
 
 // newServer construye el servidor HTTP: service → handler → router.
